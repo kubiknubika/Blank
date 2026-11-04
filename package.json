@@ -5,6 +5,7 @@
   "description": "Job application tracker with a kanban pipeline and analytics — React + Express + SQLite",
   "license": "MIT",
   "workspaces": [
+    "shared",
     "server",
     "client"
   ],
@@ -12,14 +13,14 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "concurrently -n server,client -c blue,magenta \"npm run dev -w server\" \"npm run dev -w client\"",
-    "build": "npm run build -w client && npm run build -w server",
+    "dev": "npm run build -w shared && concurrently -n shared,server,client -c yellow,blue,magenta \"npm run dev -w shared\" \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w shared && npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
-    "test": "npm run test -w server && npm run test -w client",
+    "test": "npm run build -w shared && npm run test -w server && npm run test -w client",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
+    "typecheck": "npm run build -w shared && npm run typecheck -w server && npm run typecheck -w client"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
