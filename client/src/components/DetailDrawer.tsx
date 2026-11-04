@@ -19,6 +19,7 @@ import {
   formatSalary,
   relativeDays,
 } from '../lib/format';
+import { followUpLabel, reminderBucket } from '../lib/reminders';
 
 interface DetailDrawerProps {
   appId: string;
@@ -34,6 +35,7 @@ interface DetailDrawerProps {
 const EVENT_ICONS: Record<EventType, string> = {
   created: '✨',
   status: '🔀',
+  reminder: '🔔',
   note: '📝',
   call: '📞',
   email: '✉️',
@@ -217,6 +219,18 @@ export function DetailDrawer({
                     <dt>Applied</dt>
                     <dd>
                       {app.appliedAt} ({relativeDays(app.appliedAt)})
+                    </dd>
+                  </>
+                )}
+                {app.followUpAt && (
+                  <>
+                    <dt>Follow-up</dt>
+                    <dd>
+                      <span
+                        className={`reminder-due reminder-due-${reminderBucket(app.followUpAt)}`}
+                      >
+                        🔔 {app.followUpAt} ({followUpLabel(app.followUpAt)})
+                      </span>
                     </dd>
                   </>
                 )}

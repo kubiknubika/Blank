@@ -89,6 +89,19 @@ const MIGRATIONS: { id: number; name: string; up: string }[] = [
       CREATE INDEX idx_applications_user ON applications(user_id, updated_at DESC);
     `,
   },
+  {
+    id: 5,
+    name: 'applications-follow-up',
+    // Date-only reminder ("follow up on this application"). Partial index:
+    // only a small fraction of rows ever carry a reminder, and the only
+    // query that filters on it is the reminders list.
+    up: `
+      ALTER TABLE applications ADD COLUMN follow_up_at TEXT;
+      CREATE INDEX idx_applications_follow_up
+        ON applications(user_id, follow_up_at)
+        WHERE follow_up_at IS NOT NULL;
+    `,
+  },
 ];
 
 export interface DbOptions {

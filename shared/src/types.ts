@@ -29,7 +29,15 @@ export type WorkMode = (typeof WORK_MODES)[number];
 export const PRIORITIES = ['low', 'medium', 'high'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
-export const EVENT_TYPES = ['created', 'status', 'note', 'call', 'email', 'task'] as const;
+export const EVENT_TYPES = [
+  'created',
+  'status',
+  'reminder',
+  'note',
+  'call',
+  'email',
+  'task',
+] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /** Event types the API accepts from users; the rest are system-generated. */
@@ -51,6 +59,8 @@ export interface Application {
   url: string | null;
   notes: string | null;
   appliedAt: string | null;
+  /** Date-only (YYYY-MM-DD) reminder: "follow up on this application". */
+  followUpAt: string | null;
   createdAt: string;
   updatedAt: string;
   /** Monotonic row version for optimistic concurrency (ETag / If-Match). */

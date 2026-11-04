@@ -33,6 +33,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
   const [url, setUrl] = useState(initial?.url ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [appliedAt, setAppliedAt] = useState(initial?.appliedAt ?? '');
+  const [followUpAt, setFollowUpAt] = useState(initial?.followUpAt ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -56,6 +57,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
     setUrl(a.url ?? '');
     setNotes(a.notes ?? '');
     setAppliedAt(a.appliedAt ?? '');
+    setFollowUpAt(a.followUpAt ?? '');
   };
 
   // 412 recovery: pull the version another tab committed and let the user
@@ -98,6 +100,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
           url: url.trim() || null,
           notes: notes.trim() || null,
           appliedAt: appliedAt || null,
+          followUpAt: followUpAt || null,
         },
         initial ? baseVersion : undefined,
       );
@@ -234,6 +237,13 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
             </Field>
             <Field label="Applied on" error={fieldErrors.appliedAt}>
               <input type="date" value={appliedAt} onChange={(e) => setAppliedAt(e.target.value)} />
+            </Field>
+            <Field label="Follow-up on" error={fieldErrors.followUpAt}>
+              <input
+                type="date"
+                value={followUpAt}
+                onChange={(e) => setFollowUpAt(e.target.value)}
+              />
             </Field>
             <Field label="Job posting URL" error={fieldErrors.url}>
               <input

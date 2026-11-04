@@ -147,6 +147,7 @@ export const api = {
       body: JSON.stringify({ type, message }),
     }),
   overview: () => request<AnalyticsOverview>('/analytics/overview'),
+  reminders: () => request<Application[]>('/reminders'),
   resetDemo: () =>
     request<{ status: string; applications: number }>('/demo/reset', { method: 'POST' }),
 };

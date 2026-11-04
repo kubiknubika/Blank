@@ -135,6 +135,48 @@ test('delete removes the card after confirming the dialog', async ({ page }) => 
   await expect(page.locator('article.card', { hasText: company })).toHaveCount(0);
 });
 
+test('follow-up: schedule via form → badge on card → dashboard panel → rejection clears it', async ({
+  page,
+}) => {
+  const company = `Remind Me ${Date.now()}`;
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ New application' }).click();
+  const form = page.getByRole('dialog', { name: 'New application' });
+  await form.getByPlaceholder('Acme Corp').fill(company);
+  await form.getByPlaceholder('Frontend Engineer').fill('SRE');
+  await form.getByLabel('Follow-up on').fill(todayStr);
+  await form.getByRole('button', { name: 'Create application' }).click();
+  await expect(form).toBeHidden();
+
+  // The card carries a "today" reminder badge.
+  const card = page.locator('article.card', { hasText: company });
+  await expect(card.locator('.follow-up-today')).toContainText('Follow-up today');
+
+  // Dashboard groups it under Today.
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Follow-ups' });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('.reminders-today')).toContainText(company);
+
+  // Open the drawer from the panel and reject: the follow-up auto-clears.
+  await panel.locator('.reminders-today button', { hasText: company }).click();
+  const drawer = page.getByRole('dialog', { name: 'Application details' });
+  await expect(drawer).toContainText('Follow-up');
+  await drawer.getByLabel('Application status').selectOption('rejected');
+  await expect(drawer).toContainText('Follow-up cleared (application rejected)');
+  await drawer.getByRole('button', { name: 'Close' }).click();
+
+  // Back on the board the badge is gone.
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await expect(card.locator('.follow-up')).toHaveCount(0);
+});
+
 test('reset demo restores the seed dataset (runs last, destructive)', async ({ page }) => {
   await page.goto('/');
   page.once('dialog', (dialog) => void dialog.accept());

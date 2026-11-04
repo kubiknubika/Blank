@@ -24,6 +24,7 @@ interface ApplicationRow {
   url: string | null;
   notes: string | null;
   applied_at: string | null;
+  follow_up_at: string | null;
   created_at: string;
   updated_at: string;
   version: number;
@@ -53,6 +54,7 @@ function toApplication(row: ApplicationRow): Application {
     url: row.url,
     notes: row.notes,
     appliedAt: row.applied_at,
+    followUpAt: row.follow_up_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     version: row.version,
@@ -83,6 +85,7 @@ const FIELD_TO_COLUMN = {
   url: 'url',
   notes: 'notes',
   appliedAt: 'applied_at',
+  followUpAt: 'follow_up_at',
 } as const satisfies Record<string, string>;
 
 /**
@@ -158,8 +161,8 @@ export class ApplicationRepository {
       .prepare(
         `INSERT INTO applications
          (id, user_id, company, position, status, source, priority, location, work_mode,
-          salary_min, salary_max, currency, url, notes, applied_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          salary_min, salary_max, currency, url, notes, applied_at, follow_up_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -177,6 +180,7 @@ export class ApplicationRepository {
         input.url,
         input.notes,
         input.appliedAt,
+        input.followUpAt,
         now,
         now,
       );
@@ -238,6 +242,22 @@ export class ApplicationRepository {
       .prepare('SELECT * FROM events WHERE application_id = ? ORDER BY created_at DESC, rowid DESC')
       .all(applicationId) as unknown as EventRow[];
     return rows.map(toEvent);
+  }
+
+  /**
+   * All applications carrying a reminder, soonest first. Date-only
+   * strings sort lexicographically = chronologically (YYYY-MM-DD).
+   * The partial index idx_applications_follow_up serves this exactly.
+   */
+  listReminders(userId: string): Application[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM applications
+         WHERE user_id = ? AND follow_up_at IS NOT NULL
+         ORDER BY follow_up_at ASC, created_at ASC`,
+      )
+      .all(userId) as unknown as ApplicationRow[];
+    return rows.map(toApplication);
   }
 
   /** Global count — liveness/metrics only, never user-facing data. */

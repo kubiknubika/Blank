@@ -12,6 +12,8 @@ interface SeedItem {
   salaryMin: number;
   salaryMax: number;
   daysAgoApplied: number | null;
+  /** Follow-up date offset from today (negative = overdue). */
+  followUpInDays?: number;
   notes?: string;
 }
 
@@ -27,6 +29,7 @@ const SEED: SeedItem[] = [
     salaryMin: 85000,
     salaryMax: 105000,
     daysAgoApplied: 21,
+    followUpInDays: 0, // today: prep the interview
     notes: 'Tech interview scheduled. Prepare system design: news feed.',
   },
   {
@@ -40,6 +43,7 @@ const SEED: SeedItem[] = [
     salaryMin: 70000,
     salaryMax: 90000,
     daysAgoApplied: 12,
+    followUpInDays: -2, // overdue: chase the recruiter
   },
   {
     company: 'N26',
@@ -52,6 +56,7 @@ const SEED: SeedItem[] = [
     salaryMin: 80000,
     salaryMax: 95000,
     daysAgoApplied: 35,
+    followUpInDays: 3, // upcoming: reply about the start date
     notes: 'Offer received! Negotiating start date.',
   },
   {
@@ -220,6 +225,10 @@ export function seedDatabase(service: UserScope): void {
       item.daysAgoApplied != null
         ? new Date(now - item.daysAgoApplied * 86400000).toISOString().slice(0, 10)
         : null;
+    const followUpAt =
+      item.followUpInDays != null
+        ? new Date(now + item.followUpInDays * 86400000).toISOString().slice(0, 10)
+        : null;
     const app = service.create({
       company: item.company,
       position: item.position,
@@ -234,6 +243,7 @@ export function seedDatabase(service: UserScope): void {
       url: null,
       notes: item.notes ?? null,
       appliedAt,
+      followUpAt,
     });
     if (item.status === 'interview') {
       service.addEvent(app.id, { type: 'task', message: 'Prepare for the technical interview' });

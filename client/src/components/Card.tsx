@@ -1,6 +1,7 @@
 import type { DragEvent } from 'react';
 import { SOURCE_LABELS, type Application } from '../types';
 import { companyColor, companyInitials, formatSalary, relativeDays } from '../lib/format';
+import { followUpLabel, reminderBucket } from '../lib/reminders';
 
 interface CardProps {
   app: Application;
@@ -43,6 +44,11 @@ export function Card({ app, dragging, onDragStart, onDragEnd, onClick }: CardPro
         {app.location && <span>📍 {app.location}</span>}
         {salary && <span>💰 {salary}</span>}
       </div>
+      {app.followUpAt && (
+        <div className={`follow-up follow-up-${reminderBucket(app.followUpAt)}`}>
+          <span aria-hidden="true">🔔</span> Follow-up {followUpLabel(app.followUpAt)}
+        </div>
+      )}
       <div className="card-footer">
         <span className="chip">{SOURCE_LABELS[app.source]}</span>
         {app.appliedAt && <span className="muted">{relativeDays(app.appliedAt)}</span>}

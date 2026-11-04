@@ -32,6 +32,15 @@ export const createApplicationSchema = z
           .nullable(),
       )
       .default(null),
+    followUpAt: z
+      .preprocess(
+        emptyToNull,
+        z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+          .nullable(),
+      )
+      .default(null),
   })
   .refine(
     (data) => data.salaryMin == null || data.salaryMax == null || data.salaryMin <= data.salaryMax,
@@ -56,6 +65,13 @@ export const updateApplicationSchema = z
     ),
     notes: z.preprocess(emptyToNull, z.string().trim().max(5000).nullable()),
     appliedAt: z.preprocess(
+      emptyToNull,
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+        .nullable(),
+    ),
+    followUpAt: z.preprocess(
       emptyToNull,
       z
         .string()

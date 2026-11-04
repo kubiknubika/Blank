@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { STATUS_META, type AnalyticsOverview } from '../types';
+import { STATUS_META, type AnalyticsOverview, type Application } from '../types';
 import { formatDateTime } from '../lib/format';
+import { bucketReminders, followUpLabel } from '../lib/reminders';
 import { WeeklyChart } from './charts/WeeklyChart';
 import { StatusFunnel } from './charts/StatusFunnel';
 import { SourceBars } from './charts/SourceBars';
@@ -12,14 +13,19 @@ interface DashboardProps {
 
 export function Dashboard({ onSelect }: DashboardProps) {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
+  const [reminders, setReminders] = useState<Application[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .overview()
-      .then((d) => {
-        if (!cancelled) setData(d);
+    // Reminders are a nice-to-have panel: a failure there must not take
+    // the whole dashboard down, so it degrades to an empty list.
+    Promise.all([api.overview(), api.reminders().catch(() => [] as Application[])])
+      .then(([d, r]) => {
+        if (!cancelled) {
+          setData(d);
+          setReminders(r);
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load analytics');
@@ -66,6 +72,8 @@ export function Dashboard({ onSelect }: DashboardProps) {
         />
       </div>
 
+      <RemindersPanel apps={reminders} onSelect={onSelect} />
+
       <div className="charts-grid">
         <section className="panel">
           <h3>Applications per week</h3>
@@ -110,6 +118,53 @@ export function Dashboard({ onSelect }: DashboardProps) {
           .join(' → ')}
       </p>
     </div>
+  );
+}
+
+function RemindersPanel({
+  apps,
+  onSelect,
+}: {
+  apps: Application[];
+  onSelect: (id: string) => void;
+}) {
+  const buckets = bucketReminders(apps);
+  const total = buckets.overdue.length + buckets.today.length + buckets.upcoming.length;
+  if (total === 0) return null;
+  const groups = [
+    { key: 'overdue', title: 'Overdue', items: buckets.overdue },
+    { key: 'today', title: 'Today', items: buckets.today },
+    { key: 'upcoming', title: 'Upcoming', items: buckets.upcoming },
+  ] as const;
+  return (
+    <section className="panel reminders-panel" aria-label="Follow-ups">
+      <h3>🔔 Follow-ups</h3>
+      <div className="reminders-groups">
+        {groups.map(
+          (g) =>
+            g.items.length > 0 && (
+              <div key={g.key} className={`reminders-group reminders-${g.key}`}>
+                <h4>
+                  {g.title} <span className="reminders-count">{g.items.length}</span>
+                </h4>
+                <ul>
+                  {g.items.map((a) => (
+                    <li key={a.id}>
+                      <button className="activity-link" onClick={() => onSelect(a.id)}>
+                        <strong>{a.company}</strong>
+                        <span className="muted"> · {a.position}</span>
+                      </button>
+                      <span className={`reminder-due reminder-due-${g.key}`}>
+                        {followUpLabel(a.followUpAt!)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ),
+        )}
+      </div>
+    </section>
   );
 }
 

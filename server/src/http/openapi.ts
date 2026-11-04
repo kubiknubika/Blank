@@ -78,6 +78,7 @@ const applicationFields = {
   url: nullable({ ...str, format: 'uri' }),
   notes: nullable(str),
   appliedAt: nullable({ ...str, format: 'date' }),
+  followUpAt: nullable({ ...str, format: 'date' }),
   createdAt: { ...str, format: 'date-time' },
   updatedAt: { ...str, format: 'date-time' },
   version: { ...int, minimum: 1, description: 'Monotonic row version; mirrors the ETag.' },
@@ -454,6 +455,27 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             401: unauthorizedResponse,
             404: errorResponse('No such application (or it belongs to another user).'),
             429: rateLimitedResponse,
+          },
+        },
+      },
+      '/api/reminders': {
+        get: {
+          tags: ['applications'],
+          summary: 'Applications with a follow-up date, soonest first.',
+          description:
+            "Flat list; clients bucket into overdue/today/upcoming in the USER's timezone. " +
+            'Moving an application to rejected clears its follow-up automatically.',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: {
+              description: 'Reminders (may be empty).',
+              content: {
+                'application/json': {
+                  schema: { type: 'array', items: { $ref: '#/components/schemas/Application' } },
+                },
+              },
+            },
+            401: unauthorizedResponse,
           },
         },
       },

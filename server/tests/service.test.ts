@@ -25,6 +25,7 @@ const baseInput = {
   url: null,
   notes: null,
   appliedAt: null,
+  followUpAt: null,
 } as const;
 
 describe('ApplicationService', () => {

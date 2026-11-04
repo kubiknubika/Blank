@@ -15,6 +15,8 @@ import { ApplicationRepository } from './repository.js';
  *  - creating an application atomically records a `created` event
  *  - a status change atomically records a `status` event
  *  - moving to `applied` stamps appliedAt if the caller didn't provide one
+ *  - scheduling/clearing a follow-up records a `reminder` event
+ *  - moving to `rejected` clears a pending follow-up (nothing to chase)
  *  - reads compose application + events into one aggregate
  *
  * Multi-user: every data operation goes through forUser(userId), which
@@ -27,6 +29,8 @@ import { ApplicationRepository } from './repository.js';
  */
 export interface UserScope {
   listPage(query: ListApplicationsQuery): { items: Application[]; total: number };
+  /** Applications with a follow-up date, soonest first. */
+  listReminders(): Application[];
   get(id: string): ApplicationWithEvents;
   create(input: CreateApplicationInput): ApplicationWithEvents;
   update(
@@ -68,6 +72,10 @@ export class ApplicationService {
        */
       listPage(query) {
         return { items: repo.list(userId, query), total: repo.countFiltered(userId, query) };
+      },
+
+      listReminders() {
+        return repo.listReminders(userId);
       },
 
       get(id) {
@@ -112,6 +120,14 @@ export class ApplicationService {
           ) {
             patch.appliedAt = ts.slice(0, 10);
           }
+          // A rejection ends the chase: drop a pending follow-up unless the
+          // caller explicitly set one in the same patch.
+          const reminderAutoCleared =
+            statusChanged &&
+            input.status === 'rejected' &&
+            existing.followUpAt !== null &&
+            input.followUpAt === undefined;
+          if (reminderAutoCleared) patch.followUpAt = null;
 
           const app = repo.update(userId, id, patch, ts, expectedVersion);
           if (!app) throw new PreconditionFailedError();
@@ -120,6 +136,20 @@ export class ApplicationService {
               id,
               'status',
               `Status changed: ${existing.status} → ${input.status}`,
+              ts,
+            );
+          }
+          const reminderChanged =
+            patch.followUpAt !== undefined && patch.followUpAt !== existing.followUpAt;
+          if (reminderChanged) {
+            repo.insertEvent(
+              id,
+              'reminder',
+              patch.followUpAt === null
+                ? reminderAutoCleared
+                  ? 'Follow-up cleared (application rejected)'
+                  : 'Follow-up cleared'
+                : `Follow-up scheduled for ${patch.followUpAt}`,
               ts,
             );
           }

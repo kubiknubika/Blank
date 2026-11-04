@@ -31,7 +31,7 @@ export function createApiRouter(service: ApplicationService, db: DatabaseSync): 
   // Data routes require a session; ops/health above stays public, and
   // unknown paths still fall through to a plain 404 (not 401) so the
   // API's shape isn't gated on auth.
-  api.use(['/applications', '/analytics', '/demo'], requireUser);
+  api.use(['/applications', '/analytics', '/demo', '/reminders'], requireUser);
   const scopeOf = (req: { user?: { id: string } }): UserScope => service.forUser(req.user!.id);
 
   api.get('/applications', (req, res) => {
@@ -74,6 +74,13 @@ export function createApiRouter(service: ApplicationService, db: DatabaseSync): 
 
   api.get('/analytics/overview', (req, res) => {
     res.json(buildOverview(db, req.user!.id));
+  });
+
+  api.get('/reminders', (req, res) => {
+    // Flat list, soonest first; the client buckets into
+    // overdue / today / upcoming so "today" follows the USER's timezone,
+    // not the server's.
+    res.json(scopeOf(req).listReminders());
   });
 
   api.post('/demo/reset', (req, res) => {
