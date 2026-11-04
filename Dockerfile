@@ -28,6 +28,8 @@ RUN npm ci --omit=dev --workspace=server --workspace=shared && npm cache clean -
 COPY --from=build /app/shared/dist shared/dist
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/client/dist client/dist
+# Operational scripts (online backup): docker exec <ctr> node server/scripts/backup.mjs
+COPY server/scripts server/scripts
 
 RUN mkdir -p /data && chown -R node:node /data
 USER node

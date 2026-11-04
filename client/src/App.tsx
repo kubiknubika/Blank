@@ -180,6 +180,7 @@ export default function App() {
       {selectedId && (
         <DetailDrawer
           appId={selectedId}
+          refreshKey={dataVersion}
           onClose={() => setSelectedId(null)}
           onEdit={openEdit}
           onDelete={handleDelete}

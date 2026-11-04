@@ -10,4 +10,7 @@ server/data/
 *.db-journal
 *.db-wal
 *.db-shm
+backups/
+playwright-report/
+test-results/
 .DS_Store

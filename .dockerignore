@@ -2,6 +2,10 @@ node_modules
 **/node_modules
 **/dist
 server/data
+backups
+**/backups
+playwright-report
+test-results
 .git
 .github
 coverage

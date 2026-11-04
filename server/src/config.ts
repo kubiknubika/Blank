@@ -32,6 +32,16 @@ const configSchema = z.object({
         .map((x) => x.trim())
         .filter(Boolean),
     ),
+  // Per-IP mutation budget (POST/PUT/PATCH/DELETE). 0 disables the limiter.
+  RATE_LIMIT_MAX: z.coerce.number().int().min(0).max(100_000).default(120),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
+  METRICS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  // Reverse-proxy hops to trust for X-Forwarded-For. 0 = trust nothing
+  // (correct when directly exposed); set 1 behind a single ingress/LB.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   // Host header allowlist (comma-separated). Empty = skip the check, which is
   // required for dynamic preview hostnames; set in real deployments.
   TRUSTED_HOSTS: z
@@ -50,7 +60,7 @@ export type Config = z.infer<typeof configSchema>;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const result = configSchema.safeParse(env);
   if (!result.success) {
-    const issues = result.error.errors.map((e) => `  ${e.path.join('.')}: ${e.message}`).join('\n');
+    const issues = result.error.issues.map((e) => `  ${e.path.join('.')}: ${e.message}`).join('\n');
     throw new Error(`Invalid environment configuration:\n${issues}`);
   }
   return result.data;

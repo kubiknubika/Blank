@@ -63,7 +63,7 @@ export function errorHandler(logger: Logger) {
         error: 'Validation failed',
         code: 'VALIDATION_FAILED',
         requestId,
-        details: err.errors.map((e) => ({ path: e.path.join('.'), message: e.message })),
+        details: err.issues.map((e) => ({ path: e.path.join('.'), message: e.message })),
       };
       res.status(400).json(body);
       return;

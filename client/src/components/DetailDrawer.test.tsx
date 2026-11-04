@@ -166,3 +166,45 @@ describe('DetailDrawer status select', () => {
     );
   });
 });
+
+describe('DetailDrawer refreshKey', () => {
+  it('reloads in place when refreshKey bumps, without a loading flash', async () => {
+    getMock.mockResolvedValueOnce(makeApp('a1', { position: 'FE' }));
+    const props = {
+      appId: 'a1',
+      onClose: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(async () => {}),
+      onChanged: vi.fn(),
+      onError: vi.fn(),
+    };
+    const view = render(<DetailDrawer {...props} refreshKey={0} />);
+    await screen.findByText('Co a1');
+    expect(getMock).toHaveBeenCalledTimes(1);
+
+    // The edit form saved: parent bumps dataVersion → drawer must refetch.
+    getMock.mockResolvedValueOnce(makeApp('a1', { position: 'Senior FE', version: 2 }));
+    view.rerender(<DetailDrawer {...props} refreshKey={1} />);
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+    await screen.findByText('Senior FE');
+    // Old content stayed visible during the reload — no loading reset.
+    expect(screen.queryByText('Loading…')).toBeNull();
+  });
+
+  it('same refreshKey with new callback identities still does not refetch', async () => {
+    getMock.mockResolvedValue(makeApp('a1'));
+    const view = renderDrawer('a1');
+    await screen.findByText('Co a1');
+    view.rerender(
+      <DetailDrawer
+        appId="a1"
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn(async () => {})}
+        onChanged={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+  });
+});

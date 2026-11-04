@@ -92,6 +92,7 @@ export const ERROR_CODES = [
   'FORBIDDEN',
   'UNSUPPORTED_MEDIA_TYPE',
   'PRECONDITION_FAILED',
+  'RATE_LIMITED',
   'INTERNAL',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

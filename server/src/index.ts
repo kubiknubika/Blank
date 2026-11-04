@@ -36,6 +36,9 @@ function main(): void {
       trustedHosts: config.TRUSTED_HOSTS,
       isDevelopment: config.NODE_ENV !== 'production',
     },
+    rateLimit: { max: config.RATE_LIMIT_MAX, windowMs: config.RATE_LIMIT_WINDOW_MS },
+    metricsEnabled: config.METRICS_ENABLED,
+    trustProxyHops: config.TRUST_PROXY_HOPS,
   });
   const server = app.listen(config.PORT, config.HOST, () => {
     logger.info('server listening', {
@@ -50,6 +53,10 @@ function main(): void {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info('shutting down', { signal });
+
+    // Flip readiness FIRST so load balancers stop routing new traffic
+    // while in-flight requests are still allowed to finish.
+    (app.locals.lifecycle as { draining: boolean }).draining = true;
 
     // Stop accepting connections, let in-flight requests finish, then close the DB.
     const timer = setTimeout(() => {

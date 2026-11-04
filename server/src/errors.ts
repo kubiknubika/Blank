@@ -46,3 +46,12 @@ export class PreconditionFailedError extends AppError {
     super(message, 'PRECONDITION_FAILED', 412);
   }
 }
+
+/** Per-IP mutation budget exhausted; Retry-After is set by the limiter. */
+export class RateLimitedError extends AppError {
+  constructor(retryAfterSeconds: number) {
+    super(`Too many requests. Retry in ${retryAfterSeconds} second(s).`, 'RATE_LIMITED', 429);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+  readonly retryAfterSeconds: number;
+}

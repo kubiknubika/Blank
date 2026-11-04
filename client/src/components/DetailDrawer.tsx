@@ -27,6 +27,8 @@ interface DetailDrawerProps {
   onDelete: (id: string) => Promise<void>;
   onChanged: () => void;
   onError: (message: string) => void;
+  /** Bumped by the parent on any data change; triggers an in-place reload. */
+  refreshKey?: number;
 }
 
 const EVENT_ICONS: Record<EventType, string> = {
@@ -45,6 +47,7 @@ export function DetailDrawer({
   onDelete,
   onChanged,
   onError,
+  refreshKey = 0,
 }: DetailDrawerProps) {
   const [app, setApp] = useState<ApplicationWithEvents | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,11 +83,19 @@ export function DetailDrawer({
     }
   }, [appId]);
 
+  // Reset the visible state only when switching to a DIFFERENT card;
+  // a refreshKey bump (e.g. the edit form saved) reloads in place, without
+  // a loading flicker. Without this, saving an edit left the open drawer
+  // showing stale data until it was closed and reopened.
+  const loadedIdRef = useRef<string | null>(null);
   useEffect(() => {
-    setApp(null);
-    setLoading(true);
+    if (loadedIdRef.current !== appId) {
+      loadedIdRef.current = appId;
+      setApp(null);
+      setLoading(true);
+    }
     void load();
-  }, [load]);
+  }, [load, appId, refreshKey]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
