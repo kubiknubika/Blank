@@ -28,7 +28,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 | Frontend | React 18, TypeScript (strict), Vite, hand-rolled SVG charts   |
 | Backend  | Node.js 22, Express 5, Zod validation                         |
 | Database | SQLite via built-in `node:sqlite` (no native deps, WAL mode)  |
-| Testing  | Vitest, Supertest — 27 API and unit tests                     |
+| Testing  | Vitest, Supertest — 51 API, service, migration and unit tests |
 | Tooling  | ESLint 9 (flat config), Prettier, npm workspaces              |
 | DevOps   | GitHub Actions CI, multi-stage Dockerfile, non-root container |
 
@@ -36,24 +36,36 @@ Job hunting produces dozens of applications across different stages, sources, an
 
 ```mermaid
 flowchart LR
+    subgraph Shared["@offerflow/shared"]
+        Contract[Domain types + Zod schemas]
+    end
     subgraph Client["React SPA (Vite)"]
         UI[Kanban Board] --- Dash[Dashboard]
         UI --- Drawer[Detail Drawer + Timeline]
+        EB[Error Boundary]
     end
     subgraph Server["Express 5 API"]
-        Routes[REST routes] --> Zod[Zod validation]
-        Zod --> Repo[Repository layer]
-        Routes --> Analytics[Analytics aggregation]
+        MW[Middleware: request id, access log, error mapping]
+        Routes[Thin routes] --> Service[Service: business rules + transactions]
+        Service --> Repo[Repository: pure SQL]
+        Service --> Analytics[Analytics aggregation]
     end
-    Client -- "/api/* (JSON)" --> Server
-    Repo --> DB[(SQLite\nnode:sqlite)]
-    Analytics --> DB
+    Contract -. "single source of truth" .-> Client
+    Contract -. "runtime validation" .-> Server
+    Client -- "/api/* (JSON)" --> MW --> Routes
+    Repo --> DB[(SQLite: WAL, migrations, CHECK constraints)]
 ```
 
-- **Monorepo** with npm workspaces: `client/` and `server/`
-- **Repository pattern** isolates SQL from route handlers
-- **Event sourcing lite**: status transitions append immutable events, powering the timeline and recent-activity feed
+- **Monorepo** with npm workspaces: `shared/`, `client/`, `server/`
+- **Shared contract**: domain types and Zod schemas live in `@offerflow/shared` — contract drift becomes a compile error, not a runtime bug
+- **Layered server**: routes → service → repository; business rules are testable without HTTP, SQL without rules
+- **Atomic writes**: application + events commit in one transaction (re-entrant via SAVEPOINTs)
+- **Forward-only migrations** with baselining for pre-existing databases
+- **Observability**: structured JSON logs, per-request ids echoed to the client, coded error bodies
+- **Graceful shutdown**: SIGTERM drains in-flight requests before closing the DB
 - In production the Express server serves the built SPA — **one container, one port**
+
+Design rationale is documented as ADRs in [`docs/adr/`](docs/adr/).
 
 ## Quick start
 
@@ -113,33 +125,52 @@ Validation errors return `400` with a structured `details` array (`{ path, messa
 npm test
 ```
 
-- **API tests** (Supertest): CRUD, filtering, validation edge cases (salary ranges, URLs, empty patches), automatic `appliedAt`, event cascades, analytics correctness, empty-DB safety
-- **Unit tests**: salary/date formatting, relative time, deterministic avatar colors
+- **API tests** (Supertest): CRUD, filtering, pagination, validation edge cases, coded errors (`VALIDATION_FAILED`, `NOT_FOUND`, `INVALID_JSON`), request-id propagation, analytics correctness, empty-DB safety
+- **Service tests**: business rules with an injected clock — deterministic timestamps, `appliedAt` stamping rules, atomic rollback of a failing demo reset, SAVEPOINT semantics
+- **Migration tests**: idempotency, baselining a legacy database, persistence across reopen, CHECK-constraint enforcement
+- **Config/logger tests**: fail-fast env validation, log levels, structured bindings
+- **Client unit tests**: salary/date formatting, relative time, deterministic avatar colors
 - CI runs lint → typecheck → tests → build on every push and PR
 
 ## Project structure
 
 ```
+├── shared/                 # @offerflow/shared — the contract
+│   └── src/
+│       ├── types.ts        # domain types + enums (browser-safe, zero deps)
+│       └── schemas.ts      # Zod schemas (separate entry point)
 ├── client/                 # React SPA
 │   └── src/
-│       ├── components/     # Board, Card, Dashboard, Form, Drawer, charts/
+│       ├── components/     # Board, Card, Dashboard, Form, Drawer, charts/, ErrorBoundary
 │       ├── lib/            # pure helpers (+ unit tests)
-│       ├── api.ts          # typed fetch client
-│       └── types.ts        # shared domain types
+│       ├── api.ts          # typed fetch client (codes + request ids)
+│       └── types.ts        # re-exports shared contract + UI metadata
 ├── server/                 # Express API
 │   ├── src/
-│   │   ├── app.ts          # routes + error handling
-│   │   ├── repository.ts   # SQL / repository layer
+│   │   ├── app.ts          # composition root (dependency injection)
+│   │   ├── http/           # thin routes + middleware (errors, logging, request id)
+│   │   ├── service.ts      # business rules, transactions, injected clock
+│   │   ├── repository.ts   # pure SQL data access
+│   │   ├── db.ts           # migrations, baselining, transaction helper
 │   │   ├── analytics.ts    # metric aggregation
-│   │   ├── validation.ts   # Zod schemas
+│   │   ├── config.ts       # fail-fast env validation
+│   │   ├── logger.ts       # structured JSON logger
+│   │   ├── errors.ts       # typed domain errors
 │   │   └── seed.ts         # demo dataset
-│   └── tests/              # Supertest API suite
+│   └── tests/              # API, service, migration, config suites
+├── docs/adr/               # architecture decision records
 ├── .github/workflows/      # CI
 └── Dockerfile              # multi-stage, non-root, healthcheck
 ```
 
 ## Design decisions
 
+Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
+
+- **Shared contract package** ([ADR-0001](docs/adr/0001-shared-contract-package.md)) — types and Zod schemas in one workspace package; contract drift fails the build on both sides.
+- **Layered server** ([ADR-0002](docs/adr/0002-layered-architecture.md)) — routes → service → repository, with an injected clock and a composition root for testability.
+- **Migrations + transactions** ([ADR-0003](docs/adr/0003-migrations-and-transactions.md)) — forward-only schema history, baselining for legacy DBs, atomic multi-writes via re-entrant SAVEPOINTs, CHECK constraints as a safety net.
+- **Observability + lifecycle** ([ADR-0004](docs/adr/0004-observability-and-lifecycle.md)) — structured logs, request ids end-to-end, fail-fast config, graceful shutdown.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
 - **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; keyboard users can still open cards and change status via the form.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.
