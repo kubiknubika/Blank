@@ -22,10 +22,11 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
-export function buildOverview(db: DatabaseSync): AnalyticsOverview {
+/** All aggregates are ownership-scoped: one user's dashboard never sees another's rows. */
+export function buildOverview(db: DatabaseSync, userId: string): AnalyticsOverview {
   const statusRows = db
-    .prepare('SELECT status, COUNT(*) AS count FROM applications GROUP BY status')
-    .all() as unknown as { status: Status; count: number }[];
+    .prepare('SELECT status, COUNT(*) AS count FROM applications WHERE user_id = ? GROUP BY status')
+    .all(userId) as unknown as { status: Status; count: number }[];
   const statusMap = new Map(statusRows.map((r) => [r.status, r.count]));
   const byStatus = STATUSES.map((status) => ({ status, count: statusMap.get(status) ?? 0 }));
 
@@ -41,9 +42,9 @@ export function buildOverview(db: DatabaseSync): AnalyticsOverview {
     .prepare(
       `SELECT source, COUNT(*) AS count,
               SUM(CASE WHEN status = 'offer' THEN 1 ELSE 0 END) AS offers
-       FROM applications GROUP BY source`,
+       FROM applications WHERE user_id = ? GROUP BY source`,
     )
-    .all() as unknown as { source: Source; count: number; offers: number }[];
+    .all(userId) as unknown as { source: Source; count: number; offers: number }[];
   const sourceMap = new Map(sourceRows.map((r) => [r.source, r]));
   const bySource = SOURCES.map(
     (source) => sourceMap.get(source) ?? { source, count: 0, offers: 0 },
@@ -52,9 +53,9 @@ export function buildOverview(db: DatabaseSync): AnalyticsOverview {
   const salaryRows = db
     .prepare(
       `SELECT salary_min, salary_max FROM applications
-       WHERE salary_min IS NOT NULL OR salary_max IS NOT NULL`,
+       WHERE user_id = ? AND (salary_min IS NOT NULL OR salary_max IS NOT NULL)`,
     )
-    .all() as unknown as { salary_min: number | null; salary_max: number | null }[];
+    .all(userId) as unknown as { salary_min: number | null; salary_max: number | null }[];
   const midpoints = salaryRows.map((r) =>
     r.salary_min != null && r.salary_max != null
       ? (r.salary_min + r.salary_max) / 2
@@ -77,8 +78,8 @@ export function buildOverview(db: DatabaseSync): AnalyticsOverview {
     weeks.push({ week: iso, label, applied: 0 });
   }
   const appliedRows = db
-    .prepare(`SELECT applied_at FROM applications WHERE applied_at IS NOT NULL`)
-    .all() as unknown as { applied_at: string }[];
+    .prepare(`SELECT applied_at FROM applications WHERE user_id = ? AND applied_at IS NOT NULL`)
+    .all(userId) as unknown as { applied_at: string }[];
   const weekIndex = new Map(weeks.map((w, i) => [w.week, i]));
   for (const row of appliedRows) {
     const week = mondayOf(new Date(row.applied_at)).toISOString().slice(0, 10);
@@ -90,9 +91,10 @@ export function buildOverview(db: DatabaseSync): AnalyticsOverview {
     .prepare(
       `SELECT e.id, e.application_id, e.type, e.message, e.created_at, a.company, a.position
        FROM events e JOIN applications a ON a.id = e.application_id
+       WHERE a.user_id = ?
        ORDER BY e.created_at DESC LIMIT 12`,
     )
-    .all()
+    .all(userId)
     .map((row) => {
       const r = row as unknown as {
         id: string;

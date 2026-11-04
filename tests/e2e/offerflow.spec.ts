@@ -11,6 +11,14 @@ import { test, expect, type Page } from '@playwright/test';
 
 const COLUMNS = ['Wishlist', 'Applied', 'Screening', 'Interview', 'Offer', 'Rejected'];
 
+// The app now opens on a sign-in screen. These tests exercise the
+// tracker, so each starts by signing into the shared demo account via
+// the API — page.request shares the browser context's cookie jar.
+test.beforeEach(async ({ page }) => {
+  const res = await page.request.post('/api/auth/demo');
+  expect(res.status()).toBe(200);
+});
+
 async function createApplication(page: Page, company: string, position: string): Promise<void> {
   await page.getByRole('button', { name: '+ New application' }).click();
   const form = page.getByRole('dialog', { name: 'New application' });

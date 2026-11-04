@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDb } from '../src/db.js';
 import { ApplicationService } from '../src/service.js';
+import { DEMO_USER_ID } from '../src/auth.js';
 import { createApplicationSchema } from '@offerflow/shared/schemas';
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/backup.mjs');
@@ -25,7 +26,7 @@ describe('backup script (VACUUM INTO)', () => {
     dir = mkdtempSync(path.join(tmpdir(), 'offerflow-backup-'));
     dbPath = path.join(dir, 'source.db');
     const db = createDb(dbPath);
-    const service = new ApplicationService(db);
+    const service = new ApplicationService(db).forUser(DEMO_USER_ID);
     service.create(createApplicationSchema.parse({ company: 'Backup Co', position: 'SRE' }));
     service.create(createApplicationSchema.parse({ company: 'Snapshot AG', position: 'DBA' }));
     db.close();
@@ -67,7 +68,7 @@ describe('backup script (VACUUM INTO)', () => {
   it('captures writes made while the source connection stays open', () => {
     const live = createDb(dbPath);
     try {
-      const service = new ApplicationService(live);
+      const service = new ApplicationService(live).forUser(DEMO_USER_ID);
       const target = path.join(dir, 'live-snap.db');
       runBackup([target, '--db', dbPath]);
       service.create(createApplicationSchema.parse({ company: 'Mid Backup Inc', position: 'Eng' }));

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import {
   createApplicationSchema,
   createEventSchema,
+  loginSchema,
+  registerSchema,
   updateApplicationSchema,
 } from '@offerflow/shared/schemas';
 import {
@@ -14,6 +16,7 @@ import {
   type AnalyticsOverview,
   type AppEvent,
   type Application,
+  type AuthUser,
 } from '@offerflow/shared';
 
 /**
@@ -125,6 +128,40 @@ const jsonBody = (ref: string) => ({
   content: { 'application/json': { schema: { $ref: `#/components/schemas/${ref}` } } },
 });
 
+// Compile-time drift guard for the auth user model, same as Application.
+const authUserFields = {
+  id: str,
+  email: { ...str, format: 'email' },
+  displayName: str,
+  isDemo: { type: 'boolean' },
+} satisfies Record<keyof AuthUser, JsonSchema>;
+
+const sessionResponse = (description: string) => ({
+  description,
+  headers: {
+    'Set-Cookie': {
+      schema: str,
+      description: 'offerflow_session=<token>; HttpOnly; SameSite=Lax; Path=/ (+Secure on HTTPS).',
+    },
+  },
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        properties: {
+          user: { $ref: '#/components/schemas/AuthUser' },
+          expiresAt: { ...str, format: 'date-time' },
+        },
+        required: ['user', 'expiresAt'],
+      },
+    },
+  },
+});
+
+const unauthorizedResponse = errorResponse(
+  'No valid session cookie. Sign in via /api/auth/login or /api/auth/demo.',
+);
+
 export function buildOpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.1.0',
@@ -132,17 +169,87 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       title: 'OfferFlow API',
       version: '1.0.0',
       description:
-        'Job-application tracker API. Mutations are rate-limited per IP. ' +
+        'Job-application tracker API. Data endpoints require a session cookie ' +
+        '(POST /api/auth/register, /api/auth/login, or /api/auth/demo) and are ' +
+        'scoped to the signed-in user. Mutations are rate-limited per IP. ' +
         'Single-application reads/writes use ETag / If-Match optimistic concurrency.',
     },
     servers: [{ url: '/' }],
     tags: [
+      { name: 'auth' },
       { name: 'applications' },
       { name: 'events' },
       { name: 'analytics' },
       { name: 'operations' },
     ],
     paths: {
+      '/api/auth/register': {
+        post: {
+          tags: ['auth'],
+          summary: 'Create an account and start a session.',
+          requestBody: jsonBody('RegisterInput'),
+          responses: {
+            201: sessionResponse('Account created; session cookie set.'),
+            400: errorResponse('Validation failed.'),
+            409: errorResponse('An account with this email already exists.'),
+            429: rateLimitedResponse,
+          },
+        },
+      },
+      '/api/auth/login': {
+        post: {
+          tags: ['auth'],
+          summary: 'Sign in with email and password.',
+          requestBody: jsonBody('LoginInput'),
+          responses: {
+            200: sessionResponse('Signed in; session cookie set.'),
+            400: errorResponse('Validation failed.'),
+            401: errorResponse('Invalid email or password (deliberately indistinguishable).'),
+            429: rateLimitedResponse,
+          },
+        },
+      },
+      '/api/auth/demo': {
+        post: {
+          tags: ['auth'],
+          summary: 'Sign into the shared, public demo account (no credentials).',
+          responses: {
+            200: sessionResponse('Demo session cookie set.'),
+            429: rateLimitedResponse,
+          },
+        },
+      },
+      '/api/auth/logout': {
+        post: {
+          tags: ['auth'],
+          summary: 'Revoke the current session (idempotent).',
+          responses: {
+            204: { description: 'Session revoked; cookie cleared.' },
+          },
+        },
+      },
+      '/api/auth/me': {
+        get: {
+          tags: ['auth'],
+          summary: 'The signed-in user.',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: {
+              description: 'Current user.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { user: { $ref: '#/components/schemas/AuthUser' } },
+                    required: ['user'],
+                  },
+                },
+              },
+            },
+            401: unauthorizedResponse,
+          },
+        },
+      },
       '/api/health': {
         get: {
           tags: ['operations'],
@@ -198,7 +305,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       '/api/applications': {
         get: {
           tags: ['applications'],
-          summary: 'List applications (paginated, filterable).',
+          summary: "List the signed-in user's applications (paginated, filterable).",
+          security: [{ cookieAuth: [] }],
           parameters: [
             { name: 'status', in: 'query', schema: enumOf(STATUSES) },
             {
@@ -230,11 +338,13 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               },
             },
             400: errorResponse('Invalid query parameters.'),
+            401: unauthorizedResponse,
           },
         },
         post: {
           tags: ['applications'],
-          summary: 'Create an application.',
+          summary: 'Create an application owned by the signed-in user.',
+          security: [{ cookieAuth: [] }],
           requestBody: jsonBody('CreateApplicationInput'),
           responses: {
             201: {
@@ -246,6 +356,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               },
             },
             400: errorResponse('Validation failed.'),
+            401: unauthorizedResponse,
             415: errorResponse('Content-Type must be application/json.'),
             429: rateLimitedResponse,
           },
@@ -255,6 +366,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         get: {
           tags: ['applications'],
           summary: 'Fetch one application with its event history.',
+          security: [{ cookieAuth: [] }],
           parameters: [idParam],
           responses: {
             200: {
@@ -271,12 +383,14 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                 },
               },
             },
-            404: errorResponse('No such application.'),
+            401: unauthorizedResponse,
+            404: errorResponse('No such application (or it belongs to another user).'),
           },
         },
         patch: {
           tags: ['applications'],
           summary: 'Partially update an application (optional optimistic concurrency).',
+          security: [{ cookieAuth: [] }],
           description:
             'Send `If-Match: "<version>"` to fail with 412 instead of overwriting a concurrent ' +
             'edit; `If-Match: *` requires existence. Without the header the write is ' +
@@ -302,7 +416,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               },
             },
             400: errorResponse('Validation failed or malformed If-Match.'),
-            404: errorResponse('No such application.'),
+            401: unauthorizedResponse,
+            404: errorResponse('No such application (or it belongs to another user).'),
             412: errorResponse('Version mismatch — the row changed since it was read.'),
             415: errorResponse('Content-Type must be application/json.'),
             429: rateLimitedResponse,
@@ -311,10 +426,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         delete: {
           tags: ['applications'],
           summary: 'Delete an application and its events.',
+          security: [{ cookieAuth: [] }],
           parameters: [idParam],
           responses: {
             204: { description: 'Deleted.' },
-            404: errorResponse('No such application.'),
+            401: unauthorizedResponse,
+            404: errorResponse('No such application (or it belongs to another user).'),
             429: rateLimitedResponse,
           },
         },
@@ -323,6 +440,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         post: {
           tags: ['events'],
           summary: 'Append a user event (note / call / email / task).',
+          security: [{ cookieAuth: [] }],
           parameters: [idParam],
           requestBody: jsonBody('CreateEventInput'),
           responses: {
@@ -333,7 +451,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               },
             },
             400: errorResponse('Validation failed.'),
-            404: errorResponse('No such application.'),
+            401: unauthorizedResponse,
+            404: errorResponse('No such application (or it belongs to another user).'),
             429: rateLimitedResponse,
           },
         },
@@ -341,7 +460,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       '/api/analytics/overview': {
         get: {
           tags: ['analytics'],
-          summary: 'Dashboard aggregates (totals, funnels, weekly activity, recent events).',
+          summary: 'Dashboard aggregates for the signed-in user (totals, funnels, weekly, recent).',
+          security: [{ cookieAuth: [] }],
           responses: {
             200: {
               description: 'Overview.',
@@ -349,13 +469,15 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                 'application/json': { schema: { $ref: '#/components/schemas/AnalyticsOverview' } },
               },
             },
+            401: unauthorizedResponse,
           },
         },
       },
       '/api/demo/reset': {
         post: {
           tags: ['operations'],
-          summary: 'Replace all data with the demo seed.',
+          summary: "Replace the DEMO account's data with the seed (demo account only).",
+          security: [{ cookieAuth: [] }],
           requestBody: {
             required: false,
             content: { 'application/json': { schema: { type: 'object' } } },
@@ -373,6 +495,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
                 },
               },
             },
+            401: unauthorizedResponse,
+            403: errorResponse('Only the shared demo account may reseed.'),
             429: rateLimitedResponse,
           },
         },
@@ -396,7 +520,22 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       },
     },
     components: {
+      securitySchemes: {
+        cookieAuth: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'offerflow_session',
+          description: 'Opaque session token; only its SHA-256 is stored server-side.',
+        },
+      },
       schemas: {
+        AuthUser: {
+          type: 'object',
+          properties: authUserFields,
+          required: Object.keys(authUserFields),
+        },
+        RegisterInput: inputSchema(registerSchema),
+        LoginInput: inputSchema(loginSchema),
         CreateApplicationInput: inputSchema(createApplicationSchema),
         UpdateApplicationInput: inputSchema(updateApplicationSchema),
         CreateEventInput: inputSchema(createEventSchema),

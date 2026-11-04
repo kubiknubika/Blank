@@ -131,3 +131,83 @@ describe('api error decoding', () => {
     });
   });
 });
+
+describe('api auth methods', () => {
+  const user = {
+    id: 'u1',
+    email: 'alice@example.com',
+    displayName: 'Alice',
+    isDemo: false,
+  };
+  const session = { user, expiresAt: '2026-11-11T00:00:00.000Z' };
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  it('me() returns the user on 200 and null on 401', async () => {
+    fetchMock.mockResolvedValueOnce(json({ user }));
+    expect(await api.me()).toEqual(user);
+    fetchMock.mockResolvedValueOnce(
+      json({ error: 'Authentication required', code: 'UNAUTHORIZED' }, 401),
+    );
+    expect(await api.me()).toBeNull();
+  });
+
+  it('me() rethrows non-401 failures (network down ≠ signed out)', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: 'boom', code: 'INTERNAL' }, 500));
+    await expect(api.me()).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('login/register/demo/logout hit the right endpoints with JSON bodies', async () => {
+    fetchMock.mockResolvedValueOnce(json(session));
+    await api.login({ email: 'alice@example.com', password: 'pw-long-enough' });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/login');
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST');
+
+    fetchMock.mockResolvedValueOnce(json(session, 201));
+    await api.register({ email: 'alice@example.com', password: 'pw-long-enough' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/register');
+
+    fetchMock.mockResolvedValueOnce(json({ ...session, user: { ...user, isDemo: true } }));
+    const demo = await api.demo();
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/auth/demo');
+    expect(demo.user.isDemo).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await api.logout();
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/auth/logout');
+  });
+
+  it('a 401 from a DATA endpoint dispatches the unauthorized event; auth endpoints do not', async () => {
+    const events: string[] = [];
+    const listener = () => events.push('unauthorized');
+    // Minimal window shim: this suite runs in the node environment.
+    vi.stubGlobal('window', {
+      dispatchEvent: (e: { type: string }) => {
+        if (e.type === 'offerflow:unauthorized') listener();
+        return true;
+      },
+    });
+    try {
+      fetchMock.mockResolvedValueOnce(
+        json({ error: 'Authentication required', code: 'UNAUTHORIZED' }, 401),
+      );
+      await expect(api.listApplications()).rejects.toBeInstanceOf(ApiError);
+      expect(events).toHaveLength(1);
+
+      // Wrong-password 401 must NOT kick the shell to the login screen.
+      fetchMock.mockResolvedValueOnce(
+        json({ error: 'Invalid email or password', code: 'UNAUTHORIZED' }, 401),
+      );
+      await expect(
+        api.login({ email: 'alice@example.com', password: 'wrong' }),
+      ).rejects.toBeInstanceOf(ApiError);
+      expect(events).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubGlobal('fetch', fetchMock);
+    }
+  });
+});

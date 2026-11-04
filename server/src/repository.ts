@@ -105,9 +105,14 @@ export class ApplicationRepository {
   constructor(private db: DatabaseSync) {}
 
   /** Shared WHERE builder so list() and countFiltered() can never drift. */
-  private buildFilter(filter: ListFilter): { where: string; params: (string | number)[] } {
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
+  private buildFilter(
+    userId: string,
+    filter: ListFilter,
+  ): { where: string; params: (string | number)[] } {
+    // Ownership is the FIRST clause and not optional: every list/count is
+    // scoped to one user, by construction rather than by caller discipline.
+    const clauses: string[] = ['user_id = ?'];
+    const params: (string | number)[] = [userId];
     if (filter.status) {
       clauses.push('status = ?');
       params.push(filter.status);
@@ -122,8 +127,8 @@ export class ApplicationRepository {
     return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
   }
 
-  list(filter: ListFilter = {}): Application[] {
-    const { where, params } = this.buildFilter(filter);
+  list(userId: string, filter: ListFilter = {}): Application[] {
+    const { where, params } = this.buildFilter(userId, filter);
     const rows = this.db
       .prepare(`SELECT * FROM applications ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
       .all(...params, filter.limit ?? 100, filter.offset ?? 0) as unknown as ApplicationRow[];
@@ -131,31 +136,34 @@ export class ApplicationRepository {
   }
 
   /** Total matching the filter, ignoring limit/offset — for X-Total-Count. */
-  countFiltered(filter: ListFilter = {}): number {
-    const { where, params } = this.buildFilter(filter);
+  countFiltered(userId: string, filter: ListFilter = {}): number {
+    const { where, params } = this.buildFilter(userId, filter);
     const row = this.db
       .prepare(`SELECT COUNT(*) AS n FROM applications ${where}`)
       .get(...params) as { n: number };
     return row.n;
   }
 
-  getById(id: string): Application | null {
-    const row = this.db.prepare('SELECT * FROM applications WHERE id = ?').get(id) as
-      ApplicationRow | undefined;
+  /** Ownership-scoped: another user's id reads as absent, never as forbidden. */
+  getById(userId: string, id: string): Application | null {
+    const row = this.db
+      .prepare('SELECT * FROM applications WHERE id = ? AND user_id = ?')
+      .get(id, userId) as ApplicationRow | undefined;
     return row ? toApplication(row) : null;
   }
 
-  insert(input: CreateApplicationInput, now: string): Application {
+  insert(userId: string, input: CreateApplicationInput, now: string): Application {
     const id = randomUUID();
     this.db
       .prepare(
         `INSERT INTO applications
-         (id, company, position, status, source, priority, location, work_mode,
+         (id, user_id, company, position, status, source, priority, location, work_mode,
           salary_min, salary_max, currency, url, notes, applied_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
+        userId,
         input.company,
         input.position,
         input.status,
@@ -172,7 +180,7 @@ export class ApplicationRepository {
         now,
         now,
       );
-    return this.getById(id)!;
+    return this.getById(userId, id)!;
   }
 
   /**
@@ -182,6 +190,7 @@ export class ApplicationRepository {
    * existence check and the conditional write cannot interleave.
    */
   update(
+    userId: string,
     id: string,
     input: UpdateApplicationInput,
     now: string,
@@ -196,19 +205,21 @@ export class ApplicationRepository {
       }
     }
     sets.push('updated_at = ?', 'version = version + 1');
-    params.push(now, id);
-    let sql = `UPDATE applications SET ${sets.join(', ')} WHERE id = ?`;
+    params.push(now, id, userId);
+    let sql = `UPDATE applications SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`;
     if (expectedVersion !== undefined) {
       sql += ' AND version = ?';
       params.push(expectedVersion);
     }
     const result = this.db.prepare(sql).run(...params);
     if (result.changes === 0) return null;
-    return this.getById(id)!;
+    return this.getById(userId, id)!;
   }
 
-  delete(id: string): boolean {
-    const result = this.db.prepare('DELETE FROM applications WHERE id = ?').run(id);
+  delete(userId: string, id: string): boolean {
+    const result = this.db
+      .prepare('DELETE FROM applications WHERE id = ? AND user_id = ?')
+      .run(id, userId);
     return result.changes > 0;
   }
 
@@ -229,13 +240,21 @@ export class ApplicationRepository {
     return rows.map(toEvent);
   }
 
+  /** Global count — liveness/metrics only, never user-facing data. */
   count(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS n FROM applications').get() as { n: number };
     return row.n;
   }
 
-  deleteAll(): void {
-    // events first: explicit order keeps intent clear even though FK cascade exists
-    this.db.exec('DELETE FROM events; DELETE FROM applications;');
+  countForUser(userId: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM applications WHERE user_id = ?')
+      .get(userId) as { n: number };
+    return row.n;
+  }
+
+  deleteAllForUser(userId: string): void {
+    // Events cascade via FK; the subquery keeps the delete ownership-scoped.
+    this.db.prepare('DELETE FROM applications WHERE user_id = ?').run(userId);
   }
 }

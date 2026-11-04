@@ -7,6 +7,8 @@ import { createApiRouter } from './http/routes.js';
 import { accessLog, errorHandler, requestContext } from './http/middleware.js';
 import { securityChecks, securityHeaders, type SecurityOptions } from './http/security.js';
 import { rateLimit, type RateLimitOptions } from './http/rateLimit.js';
+import { attachUser, createAuthRouter } from './http/auth.js';
+import { AuthService } from './auth.js';
 import { buildOpenApiDocument } from './http/openapi.js';
 import { MetricsRegistry } from './observability/metrics.js';
 import {
@@ -28,6 +30,8 @@ export interface AppDeps {
   metricsEnabled?: boolean;
   /** Number of reverse-proxy hops to trust for X-Forwarded-For (0 = none). */
   trustProxyHops?: number;
+  /** Tighter per-IP budget for /api/auth credential endpoints. */
+  credentialRateLimit?: { windowMs: number; max: number; now?: () => number };
 }
 
 // Route labels must come from a closed set: anything else collapses to
@@ -54,9 +58,11 @@ export function createApp({
   rateLimit: rateLimitOpts,
   metricsEnabled = true,
   trustProxyHops = 0,
+  credentialRateLimit,
 }: AppDeps) {
   const app = express();
   const service = new ApplicationService(db, now);
+  const auth = new AuthService(db, now);
   const metrics = new MetricsRegistry();
   const lifecycle = createLifecycleState();
   // Exposed for the process entry point (drain flag) and for tests.
@@ -101,7 +107,8 @@ export function createApp({
       // The /api prefix is hard-coded because Express restores baseUrl
       // when the stack unwinds on the error path — req.baseUrl at
       // 'finish' time is '' for failed requests but '/api' for happy ones.
-      const route = req.route ? `/api${req.route.path as string}` : '/api/unmatched';
+      const base = (res.locals.metricsBase as string | undefined) ?? '/api';
+      const route = req.route ? `${base}${req.route.path as string}` : '/api/unmatched';
       metrics.incRequest(method, route, res.statusCode);
       metrics.observeDuration(method, route, seconds);
     });
@@ -141,6 +148,15 @@ export function createApp({
   });
 
   app.use(express.json({ limit: '256kb' }));
+
+  // Session resolution for every API request (never rejects on its own).
+  app.use('/api', attachUser(auth));
+  app.use('/api/auth', (_req, res, next) => {
+    // Metric route labels must read /api/auth/login, not /api/login.
+    res.locals.metricsBase = '/api/auth';
+    next();
+  });
+  app.use('/api/auth', createAuthRouter(auth, credentialRateLimit ? { credentialRateLimit } : {}));
 
   const api = createApiRouter(service, db);
   app.use('/api', api);

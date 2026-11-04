@@ -47,6 +47,20 @@ export class PreconditionFailedError extends AppError {
   }
 }
 
+/** No valid session — the caller must sign in. */
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Authentication required') {
+    super(message, 'UNAUTHORIZED', 401);
+  }
+}
+
+/** Uniqueness violation (e.g. email already registered). */
+export class ConflictError extends AppError {
+  constructor(message = 'Resource already exists') {
+    super(message, 'CONFLICT', 409);
+  }
+}
+
 /** Per-IP mutation budget exhausted; Retry-After is set by the limiter. */
 export class RateLimitedError extends AppError {
   constructor(retryAfterSeconds: number) {

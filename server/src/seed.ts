@@ -1,5 +1,5 @@
 import type { Status, Source, Priority, WorkMode } from '@offerflow/shared';
-import type { ApplicationService } from './service.js';
+import type { UserScope } from './service.js';
 
 interface SeedItem {
   company: string;
@@ -213,7 +213,7 @@ const SEED: SeedItem[] = [
   },
 ];
 
-export function seedDatabase(service: ApplicationService): void {
+export function seedDatabase(service: UserScope): void {
   const now = Date.now();
   for (const item of SEED) {
     const appliedAt =

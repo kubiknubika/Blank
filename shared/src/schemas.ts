@@ -82,6 +82,25 @@ export const listApplicationsQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+// --- auth -----------------------------------------------------------------
+
+const emailSchema = z.string().trim().toLowerCase().min(3).max(254).email();
+
+export const registerSchema = z.object({
+  email: emailSchema,
+  // NIST-ish: length floor, generous ceiling, no composition rules.
+  password: z.string().min(8, 'Password must be at least 8 characters').max(128),
+  displayName: z.string().trim().min(1).max(80).optional(),
+});
+
+export const loginSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1).max(128),
+});
+
+export type RegisterInput = z.infer<typeof registerSchema>;
+export type LoginInput = z.infer<typeof loginSchema>;
+
 export type CreateApplicationInput = z.infer<typeof createApplicationSchema>;
 export type UpdateApplicationInput = z.infer<typeof updateApplicationSchema>;
 export type CreateEventInput = z.infer<typeof createEventSchema>;

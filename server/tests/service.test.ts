@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { createDb, transaction } from '../src/db.js';
-import { ApplicationService } from '../src/service.js';
+import { ApplicationService, type UserScope } from '../src/service.js';
+import { DEMO_USER_ID } from '../src/auth.js';
 import { NotFoundError } from '../src/errors.js';
 
 /**
@@ -28,11 +29,11 @@ const baseInput = {
 
 describe('ApplicationService', () => {
   let db: DatabaseSync;
-  let service: ApplicationService;
+  let service: UserScope;
 
   beforeEach(() => {
     db = createDb(':memory:');
-    service = new ApplicationService(db, () => FIXED_NOW);
+    service = new ApplicationService(db, () => FIXED_NOW).forUser(DEMO_USER_ID);
   });
 
   it('create stamps timestamps from the injected clock and logs an event', () => {

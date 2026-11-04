@@ -56,6 +56,39 @@ const MIGRATIONS: { id: number; name: string; up: string }[] = [
     // may pass If-Match to detect lost updates. Existing rows start at 1.
     up: `ALTER TABLE applications ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`,
   },
+  {
+    id: 4,
+    name: 'users-and-sessions',
+    // Multi-user: accounts, hashed session tokens, and per-row ownership.
+    // The shared demo account owns all pre-auth rows (backfill below).
+    // user_id is nullable at the schema level because SQLite's ALTER TABLE
+    // ADD COLUMN with REFERENCES requires a NULL default under
+    // PRAGMA foreign_keys=ON; the repository binds it on EVERY insert and
+    // scopes EVERY read, and a test pins that no row is ever ownerless.
+    up: `
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT,
+        display_name TEXT NOT NULL,
+        is_demo INTEGER NOT NULL DEFAULT 0 CHECK (is_demo IN (0, 1)),
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_sessions_user ON sessions(user_id);
+      CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+      INSERT INTO users (id, email, password_hash, display_name, is_demo, created_at)
+      VALUES ('demo', 'demo@offerflow.local', NULL, 'Demo User', 1, '2026-01-01T00:00:00.000Z');
+      ALTER TABLE applications ADD COLUMN user_id TEXT REFERENCES users(id);
+      UPDATE applications SET user_id = 'demo' WHERE user_id IS NULL;
+      CREATE INDEX idx_applications_user ON applications(user_id, updated_at DESC);
+    `,
+  },
 ];
 
 export interface DbOptions {

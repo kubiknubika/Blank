@@ -1,195 +1,74 @@
-import { useCallback, useMemo, useState } from 'react';
-import { api, type ApplicationInput } from './api';
-import { useApplications } from './hooks/useApplications';
-import type { Application } from './types';
-import { Board } from './components/Board';
-import { Dashboard } from './components/Dashboard';
-import { ApplicationForm } from './components/ApplicationForm';
-import { DetailDrawer } from './components/DetailDrawer';
-import { Toasts, type Toast } from './components/Toasts';
+import { useCallback, useEffect, useState } from 'react';
+import { api, UNAUTHORIZED_EVENT } from './api';
+import type { AuthUser } from './types';
+import { AuthScreen } from './components/AuthScreen';
+import { Tracker } from './components/Tracker';
 
-type View = 'board' | 'dashboard';
+type AuthState =
+  { status: 'loading' } | { status: 'anonymous' } | { status: 'authenticated'; user: AuthUser };
 
+/**
+ * Auth shell. Resolves the session once on mount, then either renders
+ * the sign-in screen or mounts the tracker. The tracker (and its data
+ * hooks) only exist while authenticated, so no request races the login.
+ *
+ * A 401 from any data call fires UNAUTHORIZED_EVENT (see api.ts) and
+ * drops the shell back to the sign-in screen — expired sessions degrade
+ * gracefully instead of spamming error toasts.
+ */
 export default function App() {
-  const [view, setView] = useState<View>('board');
-  const [query, setQuery] = useState('');
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Application | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [auth, setAuth] = useState<AuthState>({ status: 'loading' });
 
-  const pushToast = useCallback((message: string, kind: Toast['kind'] = 'success') => {
-    const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, message, kind }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .me()
+      .then((user) => {
+        if (cancelled) return;
+        setAuth(user ? { status: 'authenticated', user } : { status: 'anonymous' });
+      })
+      .catch(() => {
+        // Network/server failure: show the sign-in screen; its own
+        // errors will surface if the backend is really down.
+        if (!cancelled) setAuth({ status: 'anonymous' });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const { apps, loading, error, dataVersion, refresh, bumpVersion, moveApp } = useApplications({
-    notify: pushToast,
-  });
+  useEffect(() => {
+    const onUnauthorized = () => setAuth({ status: 'anonymous' });
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return apps;
-    return apps.filter((a) =>
-      [a.company, a.position, a.location ?? ''].some((s) => s.toLowerCase().includes(q)),
+  const handleAuth = useCallback((user: AuthUser) => {
+    setAuth({ status: 'authenticated', user });
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    void api.logout().catch(() => {
+      // Even if the revoke call fails, drop local state; the cookie is
+      // cleared server-side on success and expires on its own otherwise.
+    });
+    setAuth({ status: 'anonymous' });
+  }, []);
+
+  if (auth.status === 'loading') {
+    return (
+      <div className="auth-screen">
+        <div className="loading" role="status">
+          Loading OfferFlow…
+        </div>
+      </div>
     );
-  }, [apps, query]);
+  }
 
-  const handleSubmit = useCallback(
-    async (input: Partial<ApplicationInput>, baseVersion?: number) => {
-      if (editing) {
-        // Form edits carry the version the user started from: if another
-        // tab saved first, the API answers 412 instead of silently
-        // overwriting their changes (drag-and-drop moves stay last-write-
-        // wins — they are single-intent and race-guarded client-side).
-        await api.updateApplication(editing.id, input, {
-          ifMatch: baseVersion ?? editing.version,
-        });
-        pushToast('Application updated');
-      } else {
-        await api.createApplication(input);
-        pushToast('Application created');
-      }
-      setFormOpen(false);
-      setEditing(null);
-      bumpVersion();
-    },
-    [editing, pushToast, bumpVersion],
-  );
+  if (auth.status === 'anonymous') {
+    return <AuthScreen onAuth={handleAuth} />;
+  }
 
-  const handleDelete = useCallback(
-    async (id: string) => {
-      await api.deleteApplication(id);
-      pushToast('Application deleted');
-      setSelectedId(null);
-      bumpVersion();
-    },
-    [pushToast, bumpVersion],
-  );
-
-  const handleResetDemo = useCallback(async () => {
-    if (!window.confirm('Replace all data with the demo dataset?')) return;
-    try {
-      await api.resetDemo();
-      pushToast('Demo data restored');
-      setSelectedId(null);
-      bumpVersion();
-    } catch {
-      pushToast('Failed to reset demo data', 'error');
-    }
-  }, [pushToast, bumpVersion]);
-
-  const openCreate = useCallback(() => {
-    setEditing(null);
-    setFormOpen(true);
-  }, []);
-
-  const openEdit = useCallback((app: Application) => {
-    setEditing(app);
-    setFormOpen(true);
-  }, []);
-
-  return (
-    <div className="app">
-      <header className="header">
-        <div className="header-left">
-          <div className="logo">
-            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
-              <rect width="32" height="32" rx="8" fill="url(#lg)" />
-              <defs>
-                <linearGradient id="lg" x1="0" y1="0" x2="32" y2="32">
-                  <stop stopColor="#6366f1" />
-                  <stop offset="1" stopColor="#8b5cf6" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M8 22V14M14 22V10M20 22V17M26 22V8"
-                stroke="#fff"
-                strokeWidth="3"
-                strokeLinecap="round"
-                transform="translate(-1 0)"
-              />
-            </svg>
-            <span>OfferFlow</span>
-          </div>
-          <nav className="nav">
-            <button
-              className={view === 'board' ? 'nav-btn active' : 'nav-btn'}
-              onClick={() => setView('board')}
-            >
-              Board
-            </button>
-            <button
-              className={view === 'dashboard' ? 'nav-btn active' : 'nav-btn'}
-              onClick={() => setView('dashboard')}
-            >
-              Dashboard
-            </button>
-          </nav>
-        </div>
-        <div className="header-right">
-          {view === 'board' && (
-            <input
-              className="search"
-              type="search"
-              placeholder="Search company, role, location…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Search applications"
-            />
-          )}
-          <button className="btn ghost" onClick={handleResetDemo} title="Restore the demo dataset">
-            Reset demo
-          </button>
-          <button className="btn primary" onClick={openCreate}>
-            + New application
-          </button>
-        </div>
-      </header>
-
-      <main className="main">
-        {error && (
-          <div className="error-banner">
-            {error}{' '}
-            <button className="btn ghost" onClick={() => void refresh()}>
-              Retry
-            </button>
-          </div>
-        )}
-        {loading ? (
-          <div className="loading">Loading applications…</div>
-        ) : view === 'board' ? (
-          <Board apps={filtered} onMove={moveApp} onSelect={setSelectedId} onCreate={openCreate} />
-        ) : (
-          <Dashboard key={dataVersion} onSelect={setSelectedId} />
-        )}
-      </main>
-
-      {formOpen && (
-        <ApplicationForm
-          initial={editing}
-          onSubmit={handleSubmit}
-          onClose={() => {
-            setFormOpen(false);
-            setEditing(null);
-          }}
-        />
-      )}
-
-      {selectedId && (
-        <DetailDrawer
-          appId={selectedId}
-          refreshKey={dataVersion}
-          onClose={() => setSelectedId(null)}
-          onEdit={openEdit}
-          onDelete={handleDelete}
-          onChanged={bumpVersion}
-          onError={(msg) => pushToast(msg, 'error')}
-        />
-      )}
-
-      <Toasts toasts={toasts} />
-    </div>
-  );
+  // key: remount on account switch so no stale data crosses users.
+  return <Tracker key={auth.user.id} user={auth.user} onLogout={handleLogout} />;
 }

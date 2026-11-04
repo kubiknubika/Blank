@@ -2,12 +2,16 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
 import { createDb } from '../src/db.js';
-import { createApp } from '../src/app.js';
+import { makeTestApp } from './helpers.js';
 import { createApiRouter } from '../src/http/routes.js';
+import { createAuthRouter } from '../src/http/auth.js';
 import { ApplicationService } from '../src/service.js';
+import { AuthService } from '../src/auth.js';
 import {
   createApplicationSchema,
   createEventSchema,
+  loginSchema,
+  registerSchema,
   updateApplicationSchema,
 } from '@offerflow/shared/schemas';
 import type { z } from 'zod';
@@ -23,11 +27,11 @@ type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
  */
 describe('OpenAPI contract', () => {
   let app: Express;
+  let agent: ReturnType<typeof makeTestApp>['agent'];
   let doc: Json;
 
   beforeAll(async () => {
-    const db = createDb(':memory:');
-    app = createApp({ db });
+    ({ app, agent } = makeTestApp());
     const res = await request(app).get('/api/openapi.json');
     expect(res.status).toBe(200);
     doc = res.body;
@@ -42,18 +46,23 @@ describe('OpenAPI contract', () => {
   it('documents every route registered on the API router — and nothing phantom', () => {
     const db = createDb(':memory:');
     const router = createApiRouter(new ApplicationService(db), db);
+    const authRouter = createAuthRouter(new AuthService(db));
     const realRoutes = new Set<string>();
-    for (const layer of (
-      router as unknown as {
-        stack: { route?: { path: string; methods: Record<string, boolean> } }[];
+    const walk = (r: unknown, prefix: string) => {
+      for (const layer of (
+        r as {
+          stack: { route?: { path: string; methods: Record<string, boolean> } }[];
+        }
+      ).stack) {
+        if (!layer.route) continue;
+        for (const method of Object.keys(layer.route.methods)) {
+          // Express ':id' → OpenAPI '{id}'
+          realRoutes.add(`${method} ${prefix}${layer.route.path.replace(/:([^/]+)/g, '{$1}')}`);
+        }
       }
-    ).stack) {
-      if (!layer.route) continue;
-      for (const method of Object.keys(layer.route.methods)) {
-        // Express ':id' → OpenAPI '{id}'
-        realRoutes.add(`${method} /api${layer.route.path.replace(/:([^/]+)/g, '{$1}')}`);
-      }
-    }
+    };
+    walk(router, '/api');
+    walk(authRouter, '/api/auth');
     const documented = new Set<string>();
     for (const [path, operations] of Object.entries<Record<string, unknown>>(doc.paths)) {
       for (const method of Object.keys(operations)) {
@@ -100,8 +109,44 @@ describe('OpenAPI contract', () => {
     expect(doc.components.schemas.UpdateApplicationInput.required).toBeUndefined();
   });
 
+  it('auth input schemas and the live session response match the contract', async () => {
+    const shapeOf = (schema: z.ZodType) =>
+      Object.keys(
+        (schema as unknown as { _zod: { def: { shape: object } } })._zod.def.shape,
+      ).sort();
+    expect(Object.keys(doc.components.schemas.RegisterInput.properties).sort()).toEqual(
+      shapeOf(registerSchema),
+    );
+    expect(Object.keys(doc.components.schemas.LoginInput.properties).sort()).toEqual(
+      shapeOf(loginSchema),
+    );
+    expect(doc.components.schemas.RegisterInput.required.sort()).toEqual(['email', 'password']);
+    expect(doc.components.securitySchemes.cookieAuth.name).toBe('offerflow_session');
+
+    const fresh = makeTestApp();
+    const login = await fresh.agent
+      .post('/api/auth/login')
+      .send({ email: 'contract@example.com', password: 'contract-password-1' });
+    // helper registered a different email; use register for a clean check
+    const reg = await request(fresh.app)
+      .post('/api/auth/register')
+      .send({ email: 'contract@example.com', password: 'contract-password-1' });
+    expect(login.status).toBe(401);
+    expect(reg.status).toBe(201);
+    expect(Object.keys(reg.body).sort()).toEqual(['expiresAt', 'user']);
+    expect(Object.keys(reg.body.user).sort()).toEqual(
+      Object.keys(doc.components.schemas.AuthUser.properties).sort(),
+    );
+    const me = await request(fresh.app)
+      .get('/api/auth/me')
+      .set('Cookie', reg.headers['set-cookie'][0].split(';')[0]);
+    expect(Object.keys(me.body.user).sort()).toEqual(
+      Object.keys(doc.components.schemas.AuthUser.properties).sort(),
+    );
+  });
+
   it('Application model matches live create/read responses field-for-field', async () => {
-    const created = await request(app)
+    const created = await agent
       .post('/api/applications')
       .send({ company: 'Contract Co', position: 'Engineer' });
     expect(created.status).toBe(201);
@@ -111,14 +156,12 @@ describe('OpenAPI contract', () => {
     expect(Object.keys(created.body).sort()).toEqual(withEventsKeys);
     expect(created.body.events).toHaveLength(1);
 
-    const fetched = await request(app).get(`/api/applications/${created.body.id}`);
+    const fetched = await agent.get(`/api/applications/${created.body.id}`);
     expect(Object.keys(fetched.body).sort()).toEqual(withEventsKeys);
     expect(doc.components.schemas.Application.required.sort()).toEqual(modelKeys);
 
     // PATCH also answers with the full ApplicationWithEvents shape.
-    const patched = await request(app)
-      .patch(`/api/applications/${created.body.id}`)
-      .send({ notes: 'x' });
+    const patched = await agent.patch(`/api/applications/${created.body.id}`).send({ notes: 'x' });
     expect(Object.keys(patched.body).sort()).toEqual(withEventsKeys);
     const patchModel =
       doc.paths['/api/applications/{id}'].patch.responses['200'].content['application/json'].schema;
@@ -126,10 +169,10 @@ describe('OpenAPI contract', () => {
   });
 
   it('AppEvent model matches a live event response', async () => {
-    const created = await request(app)
+    const created = await agent
       .post('/api/applications')
       .send({ company: 'Events Co', position: 'Engineer' });
-    const event = await request(app)
+    const event = await agent
       .post(`/api/applications/${created.body.id}/events`)
       .send({ type: 'note', message: 'called recruiter' });
     expect(event.status).toBe(201);
@@ -139,7 +182,7 @@ describe('OpenAPI contract', () => {
   });
 
   it('AnalyticsOverview model matches the live dashboard payload shape', async () => {
-    const res = await request(app).get('/api/analytics/overview');
+    const res = await agent.get('/api/analytics/overview');
     const model = doc.components.schemas.AnalyticsOverview;
     expect(Object.keys(res.body).sort()).toEqual(Object.keys(model.properties).sort());
     expect(Object.keys(res.body.totals).sort()).toEqual(
@@ -148,8 +191,8 @@ describe('OpenAPI contract', () => {
   });
 
   it('ApiError model covers a live 429 and a live validation error', async () => {
-    const limited = createApp({ db: createDb(':memory:'), rateLimit: { max: 0 } });
-    const bad = await request(limited).post('/api/applications').send({ company: '' });
+    const limited = makeTestApp({ rateLimit: { max: 0 } });
+    const bad = await limited.agent.post('/api/applications').send({ company: '' });
     expect(bad.status).toBe(400);
     const errorKeys = Object.keys(doc.components.schemas.ApiError.properties);
     for (const key of Object.keys(bad.body)) {

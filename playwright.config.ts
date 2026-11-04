@@ -37,6 +37,9 @@ export default defineConfig({
       DB_PATH: path.resolve('server/data/e2e.db'),
       SEED_ON_EMPTY: 'true',
       LOG_LEVEL: 'warn',
+      // The suite signs in before every test; give CI headroom over the
+      // production default (20/min) so retries never trip the limiter.
+      CREDENTIAL_RATE_LIMIT_MAX: '100',
     },
   },
 });

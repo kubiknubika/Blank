@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { createDb } from '../src/db.js';
 import { createApp, type AppDeps } from '../src/app.js';
+import { makeTestApp, demoAgent } from './helpers.js';
 
 /**
  * Regression tests for the request-forgery / DNS-rebinding defenses.
@@ -13,16 +14,22 @@ function makeApp(security?: AppDeps['security']): Express {
   return createApp({ db: createDb(':memory:'), security });
 }
 
+// Authenticated app: security rejections must be tested with a VALID
+// session, otherwise a 401 could mask a broken Origin/Content-Type check.
+function makeAuthedApp(security?: AppDeps['security']) {
+  return makeTestApp({ security });
+}
+
 const payload = { company: 'Acme', position: 'Engineer' };
 
 describe('security: Origin checks on mutations', () => {
-  let app: Express;
+  let agent: ReturnType<typeof makeTestApp>['agent'];
   beforeEach(() => {
-    app = makeApp({ isDevelopment: false });
+    ({ agent } = makeAuthedApp({ isDevelopment: false }));
   });
 
   it('rejects a cross-site POST (CSRF via form/fetch from another origin)', async () => {
-    const res = await request(app)
+    const res = await agent
       .post('/api/applications')
       .set('Origin', 'https://evil.example')
       .send(payload);
@@ -31,13 +38,13 @@ describe('security: Origin checks on mutations', () => {
   });
 
   it('rejects a cross-site bodyless POST /api/demo/reset (the real CSRF hole)', async () => {
-    const res = await request(app).post('/api/demo/reset').set('Origin', 'https://evil.example');
+    const res = await agent.post('/api/demo/reset').set('Origin', 'https://evil.example');
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
   });
 
   it('allows a same-origin POST (Origin host matches Host, port included)', async () => {
-    const res = await request(app)
+    const res = await agent
       .post('/api/applications')
       .set('Host', 'app.example.com')
       .set('Origin', 'https://app.example.com')
@@ -46,7 +53,7 @@ describe('security: Origin checks on mutations', () => {
   });
 
   it('rejects an Origin that differs only by port', async () => {
-    const res = await request(app)
+    const res = await agent
       .post('/api/applications')
       .set('Host', 'app.example.com')
       .set('Origin', 'https://app.example.com:8443')
@@ -55,11 +62,11 @@ describe('security: Origin checks on mutations', () => {
   });
 
   it('allows explicitly trusted origins (e.g. a separate dev frontend)', async () => {
-    const trusted = makeApp({
+    const trusted = makeAuthedApp({
       isDevelopment: false,
       trustedOrigins: ['http://localhost:5173'],
     });
-    const res = await request(trusted)
+    const res = await trusted.agent
       .post('/api/applications')
       .set('Host', 'localhost:3000')
       .set('Origin', 'http://localhost:5173')
@@ -68,8 +75,8 @@ describe('security: Origin checks on mutations', () => {
   });
 
   it('allows loopback origins in development (Vite proxy rewrites Host)', async () => {
-    const dev = makeApp({ isDevelopment: true });
-    const res = await request(dev)
+    const dev = makeAuthedApp({ isDevelopment: true });
+    const res = await dev.agent
       .post('/api/applications')
       .set('Host', 'localhost:3000')
       .set('Origin', 'http://localhost:5173')
@@ -78,25 +85,22 @@ describe('security: Origin checks on mutations', () => {
   });
 
   it('rejects a malformed Origin header', async () => {
-    const res = await request(app)
-      .post('/api/applications')
-      .set('Origin', 'not a url')
-      .send(payload);
+    const res = await agent.post('/api/applications').set('Origin', 'not a url').send(payload);
     expect(res.status).toBe(403);
   });
 
   it('allows non-browser clients without an Origin header (curl, tests)', async () => {
-    const res = await request(app).post('/api/applications').send(payload);
+    const res = await agent.post('/api/applications').send(payload);
     expect(res.status).toBe(201);
   });
 
   it('does not block reads: GET with a foreign Origin still works', async () => {
-    const res = await request(app).get('/api/health').set('Origin', 'https://evil.example');
+    const res = await agent.get('/api/health').set('Origin', 'https://evil.example');
     expect(res.status).toBe(200);
   });
 
   it('checks DELETE too, not just body-carrying methods', async () => {
-    const res = await request(app)
+    const res = await agent
       .delete('/api/applications/whatever')
       .set('Origin', 'https://evil.example');
     expect(res.status).toBe(403);
@@ -104,13 +108,13 @@ describe('security: Origin checks on mutations', () => {
 });
 
 describe('security: Content-Type enforcement', () => {
-  let app: Express;
+  let agent: ReturnType<typeof makeTestApp>['agent'];
   beforeEach(() => {
-    app = makeApp({ isDevelopment: false });
+    ({ agent } = makeAuthedApp({ isDevelopment: false }));
   });
 
   it('rejects a text/plain POST body with 415 (simple-request CSRF vector)', async () => {
-    const res = await request(app)
+    const res = await agent
       .post('/api/applications')
       .set('Content-Type', 'text/plain')
       .send(JSON.stringify(payload));
@@ -119,7 +123,7 @@ describe('security: Content-Type enforcement', () => {
   });
 
   it('rejects a form-encoded POST body with 415', async () => {
-    const res = await request(app)
+    const res = await agent
       .post('/api/applications')
       .type('form')
       .send({ company: 'Acme', position: 'Engineer' });
@@ -127,7 +131,7 @@ describe('security: Content-Type enforcement', () => {
   });
 
   it('accepts application/json with charset suffix', async () => {
-    const res = await request(app)
+    const res = await agent
       .post('/api/applications')
       .set('Content-Type', 'application/json; charset=utf-8')
       .send(JSON.stringify(payload));
@@ -135,7 +139,8 @@ describe('security: Content-Type enforcement', () => {
   });
 
   it('does not demand a Content-Type on bodyless POST /api/demo/reset', async () => {
-    const res = await request(app).post('/api/demo/reset');
+    const ctx = makeAuthedApp({ isDevelopment: false });
+    const res = await demoAgent(ctx).post('/api/demo/reset');
     expect(res.status).toBe(200);
   });
 });

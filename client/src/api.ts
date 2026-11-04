@@ -4,6 +4,7 @@ import type {
   Application,
   ApplicationWithEvents,
   AppEvent,
+  AuthUser,
   ErrorCode,
   EventType,
   Status,
@@ -12,7 +13,13 @@ import type {
 /**
  * Typed API client. Errors preserve the server's machine-readable code
  * and the request id, so failures are traceable end-to-end.
+ *
+ * Auth rides on an HttpOnly session cookie: fetch sends same-origin
+ * cookies by default, so no token handling lives in JS at all. A 401
+ * from a data endpoint fires `offerflow:unauthorized` so the app shell
+ * can drop back to the sign-in screen.
  */
+export const UNAUTHORIZED_EVENT = 'offerflow:unauthorized';
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -34,6 +41,10 @@ async function requestRaw(path: string, options: RequestInit = {}): Promise<Resp
   if (!res.ok && res.status !== 204) {
     const body = (await res.json().catch(() => null)) as Partial<ApiErrorBody> | null;
     const err = body ?? {};
+    if (res.status === 401 && !path.startsWith('/auth/') && typeof window !== 'undefined') {
+      // Session died mid-use (expired/revoked): let the shell react.
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(
       err.error ?? `Request failed (${res.status})`,
       res.status,
@@ -53,7 +64,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export type ApplicationInput = Omit<Application, 'id' | 'createdAt' | 'updatedAt'>;
 
+export interface SessionPayload {
+  user: AuthUser;
+  expiresAt: string;
+}
+
 export const api = {
+  // --- auth -----------------------------------------------------------
+  me: async (): Promise<AuthUser | null> => {
+    try {
+      const { user } = await request<{ user: AuthUser }>('/auth/me');
+      return user;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return null;
+      throw err;
+    }
+  },
+  register: (input: { email: string; password: string; displayName?: string }) =>
+    request<SessionPayload>('/auth/register', { method: 'POST', body: JSON.stringify(input) }),
+  login: (input: { email: string; password: string }) =>
+    request<SessionPayload>('/auth/login', { method: 'POST', body: JSON.stringify(input) }),
+  demo: () => request<SessionPayload>('/auth/demo', { method: 'POST' }),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
+
+  // --- data -----------------------------------------------------------
   listApplications: (
     params: { status?: Status; q?: string; limit?: number; offset?: number } = {},
   ) => {

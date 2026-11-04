@@ -5,6 +5,7 @@ import { createDb } from './db.js';
 import { createApp } from './app.js';
 import { createLogger } from './logger.js';
 import { ApplicationService } from './service.js';
+import { DEMO_USER_ID } from './auth.js';
 import { seedDatabase } from './seed.js';
 
 /**
@@ -18,9 +19,10 @@ function main(): void {
   const db = createDb(config.DB_PATH, { busyTimeoutMs: config.DB_BUSY_TIMEOUT_MS });
   const service = new ApplicationService(db);
 
-  if (config.SEED_ON_EMPTY && service.count() === 0) {
-    service.resetDemo(seedDatabase);
-    logger.info('seeded demo data', { applications: service.count() });
+  const demoScope = service.forUser(DEMO_USER_ID);
+  if (config.SEED_ON_EMPTY && demoScope.count() === 0) {
+    demoScope.resetDemo(seedDatabase);
+    logger.info('seeded demo data', { applications: demoScope.count() });
   }
 
   const clientDist = path.resolve(
@@ -39,6 +41,10 @@ function main(): void {
     rateLimit: { max: config.RATE_LIMIT_MAX, windowMs: config.RATE_LIMIT_WINDOW_MS },
     metricsEnabled: config.METRICS_ENABLED,
     trustProxyHops: config.TRUST_PROXY_HOPS,
+    credentialRateLimit: {
+      max: config.CREDENTIAL_RATE_LIMIT_MAX,
+      windowMs: config.RATE_LIMIT_WINDOW_MS,
+    },
   });
   const server = app.listen(config.PORT, config.HOST, () => {
     logger.info('server listening', {

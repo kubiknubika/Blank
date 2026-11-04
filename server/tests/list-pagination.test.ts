@@ -4,7 +4,8 @@ import type { Express } from 'express';
 import { createApplicationSchema } from '@offerflow/shared/schemas';
 import { createDb } from '../src/db.js';
 import { createApp } from '../src/app.js';
-import { ApplicationService } from '../src/service.js';
+import { makeTestApp } from './helpers.js';
+import type { UserScope } from '../src/service.js';
 import { requestContext } from '../src/http/middleware.js';
 import { silentLogger } from '../src/logger.js';
 
@@ -14,21 +15,19 @@ import { silentLogger } from '../src/logger.js';
  * search treats LIKE metacharacters as literals.
  */
 describe('list pagination and search semantics', () => {
-  let app: Express;
-  let service: ApplicationService;
+  let agent: ReturnType<typeof makeTestApp>['agent'];
+  let service: UserScope;
 
   const seed = (company: string, status?: string) =>
     service.create(createApplicationSchema.parse({ company, position: 'FE', status }));
 
   beforeEach(() => {
-    const db = createDb(':memory:');
-    app = createApp({ db });
-    service = new ApplicationService(db);
+    ({ agent, scope: service } = makeTestApp());
   });
 
   it('X-Total-Count reports the full size, not the page size', async () => {
     for (let i = 0; i < 7; i++) seed(`Co ${i}`);
-    const res = await request(app).get('/api/applications?limit=3');
+    const res = await agent.get('/api/applications?limit=3');
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(3);
     expect(res.headers['x-total-count']).toBe('7');
@@ -38,7 +37,7 @@ describe('list pagination and search semantics', () => {
     seed('A', 'applied');
     seed('B', 'applied');
     seed('C', 'wishlist');
-    const res = await request(app).get('/api/applications?status=applied&limit=1');
+    const res = await agent.get('/api/applications?status=applied&limit=1');
     expect(res.body).toHaveLength(1);
     expect(res.headers['x-total-count']).toBe('2');
   });
@@ -47,7 +46,7 @@ describe('list pagination and search semantics', () => {
     for (let i = 0; i < 5; i++) seed(`Co ${i}`);
     const ids = new Set<string>();
     for (const offset of [0, 2, 4]) {
-      const res = await request(app).get(`/api/applications?limit=2&offset=${offset}`);
+      const res = await agent.get(`/api/applications?limit=2&offset=${offset}`);
       for (const item of res.body as { id: string }[]) ids.add(item.id);
     }
     expect(ids.size).toBe(5);
@@ -59,23 +58,23 @@ describe('list pagination and search semantics', () => {
     seed('a_b labs');
     seed('axb labs');
 
-    const percent = await request(app).get('/api/applications?q=100%25');
+    const percent = await agent.get('/api/applications?q=100%25');
     expect(percent.body).toHaveLength(1);
     expect(percent.body[0].company).toBe('100% Remote');
 
-    const underscore = await request(app).get('/api/applications?q=a_b');
+    const underscore = await agent.get('/api/applications?q=a_b');
     expect(underscore.body).toHaveLength(1);
     expect(underscore.body[0].company).toBe('a_b labs');
 
     // A bare % must not match everything.
-    const bare = await request(app).get('/api/applications?q=%25');
+    const bare = await agent.get('/api/applications?q=%25');
     expect(bare.body).toHaveLength(1);
   });
 
   it('a backslash in search is also literal', async () => {
     seed('path\\to');
     seed('pathXto');
-    const res = await request(app).get('/api/applications?q=path%5Cto');
+    const res = await agent.get('/api/applications?q=path%5Cto');
     expect(res.body).toHaveLength(1);
     expect(res.body[0].company).toBe('path\\to');
   });

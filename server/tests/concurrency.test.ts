@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import request from 'supertest';
-import type { Express } from 'express';
 import { createDb } from '../src/db.js';
-import { createApp } from '../src/app.js';
-import { ApplicationService } from '../src/service.js';
+import { makeTestApp } from './helpers.js';
+import type { UserScope } from '../src/service.js';
 import { PreconditionFailedError } from '../src/errors.js';
 import { parseIfMatch } from '../src/http/concurrency.js';
 
@@ -13,36 +11,34 @@ import { parseIfMatch } from '../src/http/concurrency.js';
  * If-Match, the stale writer gets 412 and can rebase.
  */
 describe('optimistic concurrency (ETag / If-Match)', () => {
-  let app: Express;
-  let service: ApplicationService;
+  let agent: ReturnType<typeof makeTestApp>['agent'];
+  let service: UserScope;
   let id: string;
 
   beforeEach(async () => {
-    const db = createDb(':memory:');
-    app = createApp({ db });
-    service = new ApplicationService(db);
-    const res = await request(app)
-      .post('/api/applications')
-      .send({ company: 'Acme', position: 'FE' });
+    const ctx = makeTestApp();
+    agent = ctx.agent;
+    service = ctx.scope;
+    const res = await agent.post('/api/applications').send({ company: 'Acme', position: 'FE' });
     id = res.body.id;
   });
 
   it('new rows start at version 1 and GET exposes a strong ETag', async () => {
-    const res = await request(app).get(`/api/applications/${id}`);
+    const res = await agent.get(`/api/applications/${id}`);
     expect(res.body.version).toBe(1);
     expect(res.headers.etag).toBe('"1"');
   });
 
   it('every field update bumps the version and returns the new ETag', async () => {
-    const first = await request(app).patch(`/api/applications/${id}`).send({ notes: 'one' });
+    const first = await agent.patch(`/api/applications/${id}`).send({ notes: 'one' });
     expect(first.body.version).toBe(2);
     expect(first.headers.etag).toBe('"2"');
-    const second = await request(app).patch(`/api/applications/${id}`).send({ notes: 'two' });
+    const second = await agent.patch(`/api/applications/${id}`).send({ notes: 'two' });
     expect(second.body.version).toBe(3);
   });
 
   it('If-Match with the current version succeeds', async () => {
-    const res = await request(app)
+    const res = await agent
       .patch(`/api/applications/${id}`)
       .set('If-Match', '"1"')
       .send({ notes: 'fresh' });
@@ -52,23 +48,23 @@ describe('optimistic concurrency (ETag / If-Match)', () => {
 
   it('a stale If-Match gets 412 and does NOT overwrite the newer write', async () => {
     // Tab A saves first.
-    await request(app).patch(`/api/applications/${id}`).send({ notes: 'tab A' });
+    await agent.patch(`/api/applications/${id}`).send({ notes: 'tab A' });
     // Tab B still holds version 1.
-    const stale = await request(app)
+    const stale = await agent
       .patch(`/api/applications/${id}`)
       .set('If-Match', '"1"')
       .send({ notes: 'tab B' });
     expect(stale.status).toBe(412);
     expect(stale.body.code).toBe('PRECONDITION_FAILED');
 
-    const current = await request(app).get(`/api/applications/${id}`);
+    const current = await agent.get(`/api/applications/${id}`);
     expect(current.body.notes).toBe('tab A'); // not clobbered
     expect(current.body.version).toBe(2); // failed write did not bump
   });
 
   it('If-Match * passes for any existing row', async () => {
-    await request(app).patch(`/api/applications/${id}`).send({ notes: 'x' });
-    const res = await request(app)
+    await agent.patch(`/api/applications/${id}`).send({ notes: 'x' });
+    const res = await agent
       .patch(`/api/applications/${id}`)
       .set('If-Match', '*')
       .send({ notes: 'y' });
@@ -76,15 +72,15 @@ describe('optimistic concurrency (ETag / If-Match)', () => {
   });
 
   it('no If-Match keeps last-write-wins (drag-and-drop moves, old clients)', async () => {
-    await request(app).patch(`/api/applications/${id}`).send({ notes: 'a' });
-    const res = await request(app).patch(`/api/applications/${id}`).send({ notes: 'b' });
+    await agent.patch(`/api/applications/${id}`).send({ notes: 'a' });
+    const res = await agent.patch(`/api/applications/${id}`).send({ notes: 'b' });
     expect(res.status).toBe(200);
     expect(res.body.notes).toBe('b');
   });
 
   it('malformed If-Match is a 400, not a silently ignored guard', async () => {
     for (const bad of ['1', 'W/"1"', '"abc"', '"1", "2"', '"0"', '-"1"']) {
-      const res = await request(app)
+      const res = await agent
         .patch(`/api/applications/${id}`)
         .set('If-Match', bad)
         .send({ notes: 'x' });
@@ -94,14 +90,14 @@ describe('optimistic concurrency (ETag / If-Match)', () => {
   });
 
   it('412 does not record a phantom status event', async () => {
-    await request(app).patch(`/api/applications/${id}`).send({ status: 'applied' });
-    const before = await request(app).get(`/api/applications/${id}`);
-    const stale = await request(app)
+    await agent.patch(`/api/applications/${id}`).send({ status: 'applied' });
+    const before = await agent.get(`/api/applications/${id}`);
+    const stale = await agent
       .patch(`/api/applications/${id}`)
       .set('If-Match', '"1"')
       .send({ status: 'offer' });
     expect(stale.status).toBe(412);
-    const after = await request(app).get(`/api/applications/${id}`);
+    const after = await agent.get(`/api/applications/${id}`);
     expect(after.body.events).toHaveLength(before.body.events.length);
     expect(after.body.status).toBe('applied');
   });

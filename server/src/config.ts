@@ -35,6 +35,9 @@ const configSchema = z.object({
   // Per-IP mutation budget (POST/PUT/PATCH/DELETE). 0 disables the limiter.
   RATE_LIMIT_MAX: z.coerce.number().int().min(0).max(100_000).default(120),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
+  // Credential endpoints (login/register/demo) get a tighter budget:
+  // an online password-guessing brake on top of scrypt's offline cost.
+  CREDENTIAL_RATE_LIMIT_MAX: z.coerce.number().int().min(0).max(10_000).default(20),
   METRICS_ENABLED: z
     .enum(['true', 'false'])
     .default('true')

@@ -84,12 +84,23 @@ export interface AnalyticsOverview {
   recentEvents: (AppEvent & { company: string; position: string })[];
 }
 
+/** The authenticated caller behind a request. */
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName: string;
+  /** The shared try-it-out account; its data is public and resettable. */
+  isDemo: boolean;
+}
+
 /** Stable machine-readable error codes returned by the API. */
 export const ERROR_CODES = [
   'VALIDATION_FAILED',
   'NOT_FOUND',
   'INVALID_JSON',
   'FORBIDDEN',
+  'UNAUTHORIZED',
+  'CONFLICT',
   'UNSUPPORTED_MEDIA_TYPE',
   'PRECONDITION_FAILED',
   'RATE_LIMITED',
