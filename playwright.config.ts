@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { defineConfig } from '@playwright/test';
 
 /**
@@ -30,7 +31,10 @@ export default defineConfig({
       NODE_ENV: 'production',
       PORT: '3100',
       HOST: '127.0.0.1',
-      DB_PATH: 'server/data/e2e.db',
+      // Absolute: npm workspace scripts run with cwd=server/, so a
+      // relative path would land in server/server/data/ and dodge
+      // the globalSetup cleanup.
+      DB_PATH: path.resolve('server/data/e2e.db'),
       SEED_ON_EMPTY: 'true',
       LOG_LEVEL: 'warn',
     },
