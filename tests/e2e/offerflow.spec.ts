@@ -60,8 +60,10 @@ test('create → card appears → status move via drawer → search → dashboar
   await expect(page.locator('article.card')).toContainText(company);
   await page.getByLabel('Search applications').fill('');
 
-  // Dashboard renders aggregates from the real API.
-  await page.getByRole('button', { name: 'Dashboard' }).click();
+  // Dashboard renders aggregates from the real API. Exact match: seeded
+  // cards are role=button too, and one aria-label contains "Dashboard"
+  // ("Web Engineer, Dashboard at SumUp") — caught by the first CI run.
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
   await expect(page.getByText('Total applications')).toBeVisible();
   await expect(page.getByText('Response rate')).toBeVisible();
 });
