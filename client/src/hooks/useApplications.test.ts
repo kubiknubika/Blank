@@ -13,12 +13,12 @@ import type { Application, ApplicationWithEvents } from '../types';
  */
 vi.mock('../api', () => ({
   api: {
-    listApplications: vi.fn(),
+    listAllApplications: vi.fn(),
     updateApplication: vi.fn(),
   },
 }));
 
-const listMock = vi.mocked(api.listApplications);
+const listMock = vi.mocked(api.listAllApplications);
 const updateMock = vi.mocked(api.updateApplication);
 
 function makeApp(overrides: Partial<Application> = {}): Application {

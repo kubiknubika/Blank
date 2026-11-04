@@ -29,8 +29,13 @@ export class ApplicationService {
     this.repo = new ApplicationRepository(db);
   }
 
-  list(query: ListApplicationsQuery): Application[] {
-    return this.repo.list(query);
+  /**
+   * One page plus the total matching the filter. Both queries run
+   * synchronously back-to-back in the same handler — node:sqlite cannot
+   * interleave a write between them in this single-process model.
+   */
+  listPage(query: ListApplicationsQuery): { items: Application[]; total: number } {
+    return { items: this.repo.list(query), total: this.repo.countFiltered(query) };
   }
 
   get(id: string): ApplicationWithEvents {

@@ -699,6 +699,31 @@ a {
   font-size: 12px;
   font-weight: 600;
 }
+/* Editable status in the drawer: works on touch (no HTML5 DnD there)
+   and via keyboard. Styled to read like the badge it replaces. */
+.status-select {
+  appearance: none;
+  border: 1px solid transparent;
+  padding: 3px 12px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+}
+.status-select:hover:not(:disabled),
+.status-select:focus-visible {
+  border-color: currentColor;
+  outline: none;
+}
+.status-select:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.status-select option {
+  color: var(--text, #1e293b);
+  background: var(--surface, #fff);
+}
 .drawer-body {
   flex: 1;
   overflow-y: auto;

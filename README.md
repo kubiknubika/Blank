@@ -16,6 +16,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 - **Kanban board** — six-stage pipeline (Wishlist → Applied → Screening → Interview → Offer / Rejected) with native drag-and-drop and optimistic UI updates
 - **Analytics dashboard** — response rate, offer rate, median salary, weekly activity chart, pipeline funnel, and source effectiveness (which channel actually produces offers)
 - **Activity timeline** — every status change is recorded automatically; log calls, emails, notes, and tasks per application
+- **Touch & keyboard friendly** — change status right in the detail drawer (HTML5 drag-and-drop doesn't exist on touch screens)
 - **Full CRUD** — create/edit forms with client- and server-side validation, search by company/role/location
 - **Demo mode** — one-click reset to a realistic seeded dataset (16 applications across European tech companies)
 - **Zero-dependency charts** — SVG charts hand-built without chart libraries
@@ -28,7 +29,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 | Frontend | React 18, TypeScript (strict), Vite, hand-rolled SVG charts   |
 | Backend  | Node.js 22.13+, Express 5, Zod validation                     |
 | Database | SQLite via built-in `node:sqlite` (no native deps, WAL mode)  |
-| Testing  | Vitest, Supertest, Testing Library — 90 tests                 |
+| Testing  | Vitest, Supertest, Testing Library — 110 tests                |
 | Tooling  | ESLint 9 (flat config), Prettier, npm workspaces              |
 | DevOps   | GitHub Actions CI, multi-stage Dockerfile, non-root container |
 
@@ -109,7 +110,7 @@ docker run -p 3000:3000 -v offerflow-data:/data offerflow
 | Method   | Endpoint                       | Description                              |
 | -------- | ------------------------------ | ---------------------------------------- |
 | `GET`    | `/api/health`                  | Health check + application count         |
-| `GET`    | `/api/applications`            | List; filter with `?status=` and `?q=`   |
+| `GET`    | `/api/applications`            | List; `?status=`, `?q=`, `?limit=`, `?offset=`; `X-Total-Count` header |
 | `POST`   | `/api/applications`            | Create (Zod-validated)                   |
 | `GET`    | `/api/applications/:id`        | Details with full event timeline         |
 | `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes |
@@ -136,12 +137,12 @@ Hardened against failure modes reported in comparable open-source projects (full
 npm test
 ```
 
-- **API tests** (Supertest): CRUD, filtering, pagination, validation edge cases, coded errors (`VALIDATION_FAILED`, `NOT_FOUND`, `INVALID_JSON`), request-id propagation, analytics correctness, empty-DB safety
+- **API tests** (Supertest): CRUD, filtering, pagination (`X-Total-Count`, page tiling), literal `%`/`_`/`\` search, validation edge cases, coded errors (`VALIDATION_FAILED`, `NOT_FOUND`, `INVALID_JSON`), request-id propagation and sanitization, analytics correctness, empty-DB safety
 - **Security tests**: cross-site CSRF rejected (including bodyless `demo/reset`), same-origin and trusted-origin flows, `415` for non-JSON mutations, Host allowlist vs DNS rebinding, SPA-fallback route-syntax regression
 - **Service tests**: business rules with an injected clock — deterministic timestamps, `appliedAt` stamping rules, atomic rollback of a failing demo reset, SAVEPOINT semantics
 - **Migration & contention tests**: idempotency, baselining a legacy database, persistence across reopen, CHECK constraints; `busy_timeout` actually waits under a held lock, `BEGIN IMMEDIATE` holds the write lock from the start, and the WAL deferred-upgrade hazard is reproduced as a documented anti-test
 - **Config/logger tests**: fail-fast env validation, allowlist parsing, log levels, structured bindings
-- **Client tests**: salary/date formatting, relative time, avatar colors; optimistic-overlay merge rules; hook-level race regressions (stale refetch discarded, superseded move failure doesn't roll back newer state, in-flight refetch doesn't clobber a pending move) — two overlapping calls resolved out of order, not happy-path-only
+- **Client tests**: salary/date formatting, relative time, avatar colors; optimistic-overlay merge rules; hook-level race regressions (stale refetch discarded, superseded move failure doesn't roll back newer state, in-flight refetch doesn't clobber a pending move); API-client paging; drawer load-race and no-refetch-on-rerender guarantees — two overlapping calls resolved out of order, not happy-path-only
 - CI runs lint → typecheck → tests → build on every push and PR, on **both** Node 22.13.0 (the declared floor) and the latest 22.x
 
 ## Project structure
@@ -186,10 +187,11 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 - **Observability + lifecycle** ([ADR-0004](docs/adr/0004-observability-and-lifecycle.md)) — structured logs, request ids end-to-end, fail-fast config, graceful shutdown.
 - **Hardening from field reports** ([ADR-0005](docs/adr/0005-hardening-from-field-reports.md)) — every fix traced to a published issue in our exact stack: `busy_timeout` + `BEGIN IMMEDIATE` for SQLite lock errors, a real Node floor, Vite Host allowlist instead of `allowedHosts: true`, CSRF/Origin/Content-Type guards, and race-proof optimistic UI.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
-- **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; keyboard users can still open cards and change status via the form.
+- **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; the drawer's status select covers touch devices and keyboard users.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.
 - **Optimistic updates** — moving a card updates the UI instantly; race guards (latest-only refetch, per-card mutation sequencing, pending-status overlay) keep out-of-order responses from clobbering newer state.
 - **Events as a first-class table** — status history is never overwritten, which makes the timeline and analytics trustworthy.
+- **Complete reads** — the list endpoint reports `X-Total-Count` and the client follows it page by page, so the board never silently truncates at the server's page default; search escapes LIKE metacharacters so `100%` finds `100%`, not everything.
 
 ## Roadmap
 

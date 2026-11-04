@@ -23,7 +23,11 @@ export function createApiRouter(service: ApplicationService, db: DatabaseSync): 
 
   api.get('/applications', (req, res) => {
     const query = listApplicationsQuerySchema.parse(req.query);
-    res.json(service.list(query));
+    const { items, total } = service.listPage(query);
+    // Plain-array body stays backward compatible; the total travels in a
+    // header so clients can paginate without a second request.
+    res.setHeader('X-Total-Count', String(total));
+    res.json(items);
   });
 
   api.post('/applications', (req, res) => {

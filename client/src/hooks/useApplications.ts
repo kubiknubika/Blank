@@ -42,7 +42,7 @@ export function useApplications({ notify }: UseApplicationsOptions) {
   const refresh = useCallback(async () => {
     const seq = ++fetchSeq.current;
     try {
-      const data = await api.listApplications();
+      const data = await api.listAllApplications();
       if (seq !== fetchSeq.current) return; // a newer refresh was dispatched
       setApps(overlayPendingStatuses(data, pendingStatuses.current));
       setError(null);

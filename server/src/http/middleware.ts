@@ -15,11 +15,18 @@ declare global {
   }
 }
 
+// Caller-provided ids are echoed into a response header and written to
+// logs, so they must be header-safe and log-safe: a conservative charset
+// (no spaces, control chars or unicode) and a hard length cap. Anything
+// else is replaced with a generated id rather than rejected — tracing
+// should never break a request.
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
 /** Assigns a request id, echoes it back, and binds a child logger. */
 export function requestContext(logger: Logger) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const requestId =
-      (req.headers['x-request-id'] as string | undefined)?.slice(0, 64) || randomUUID();
+    const raw = req.headers['x-request-id'];
+    const requestId = typeof raw === 'string' && REQUEST_ID_PATTERN.test(raw) ? raw : randomUUID();
     req.requestId = requestId;
     req.log = logger.child({ requestId });
     res.setHeader('x-request-id', requestId);

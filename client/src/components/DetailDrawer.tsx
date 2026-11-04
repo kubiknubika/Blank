@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import {
   PRIORITY_LABELS,
   SOURCE_LABELS,
   STATUS_META,
+  STATUSES,
   USER_EVENT_TYPES,
   WORK_MODE_LABELS,
   type Application,
   type ApplicationWithEvents,
   type EventType,
+  type Status,
 } from '../types';
 import {
   companyColor,
@@ -49,20 +51,38 @@ export function DetailDrawer({
   const [eventType, setEventType] = useState<EventType>('note');
   const [message, setMessage] = useState('');
   const [adding, setAdding] = useState(false);
+  const [savingStatus, setSavingStatus] = useState(false);
+
+  // Callbacks live in refs so `load` depends ONLY on appId. Previously
+  // inline lambdas from the parent changed every render, retriggering the
+  // effect and refetching the drawer on any unrelated App state change.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
+  // Sequence guard: switching between cards (or a manual reload racing
+  // with one) must never let an older response overwrite a newer one.
+  const loadSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
       const data = await api.getApplication(appId);
+      if (seq !== loadSeq.current) return;
       setApp(data);
     } catch {
-      onError('Failed to load the application');
-      onClose();
+      if (seq !== loadSeq.current) return;
+      onErrorRef.current('Failed to load the application');
+      onCloseRef.current();
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, [appId, onClose, onError]);
+  }, [appId]);
 
   useEffect(() => {
+    setApp(null);
+    setLoading(true);
     void load();
   }, [load]);
 
@@ -100,6 +120,22 @@ export function DetailDrawer({
     }
   };
 
+  // Touch devices have no HTML5 drag-and-drop — the select is the only
+  // way to move a card there, and a keyboard-friendly path everywhere.
+  const handleStatusChange = async (status: Status) => {
+    if (!app || app.status === status) return;
+    setSavingStatus(true);
+    try {
+      await api.updateApplication(appId, { status });
+      await load();
+      onChanged();
+    } catch {
+      onError('Failed to change the status');
+    } finally {
+      setSavingStatus(false);
+    }
+  };
+
   const salary = app ? formatSalary(app) : null;
 
   return (
@@ -122,15 +158,23 @@ export function DetailDrawer({
               <div className="drawer-title">
                 <h2>{app.company}</h2>
                 <p>{app.position}</p>
-                <span
-                  className="status-badge"
+                <select
+                  className="status-select"
+                  value={app.status}
+                  disabled={savingStatus}
+                  onChange={(e) => void handleStatusChange(e.target.value as Status)}
+                  aria-label="Application status"
                   style={{
                     background: `${STATUS_META[app.status].color}22`,
                     color: STATUS_META[app.status].color,
                   }}
                 >
-                  {STATUS_META[app.status].label}
-                </span>
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_META[s].label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <button className="icon-btn" onClick={onClose} aria-label="Close">
                 ✕

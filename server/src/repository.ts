@@ -83,12 +83,27 @@ const FIELD_TO_COLUMN = {
   appliedAt: 'applied_at',
 } as const satisfies Record<string, string>;
 
+/**
+ * Escape LIKE metacharacters so a search for "100%" or "a_b" matches those
+ * literal strings instead of acting as wildcards. Paired with ESCAPE '\'
+ * in every LIKE clause below.
+ */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+export interface ListFilter {
+  status?: Status;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export class ApplicationRepository {
   constructor(private db: DatabaseSync) {}
 
-  list(
-    filter: { status?: Status; q?: string; limit?: number; offset?: number } = {},
-  ): Application[] {
+  /** Shared WHERE builder so list() and countFiltered() can never drift. */
+  private buildFilter(filter: ListFilter): { where: string; params: (string | number)[] } {
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (filter.status) {
@@ -96,15 +111,30 @@ export class ApplicationRepository {
       params.push(filter.status);
     }
     if (filter.q) {
-      clauses.push('(company LIKE ? OR position LIKE ? OR location LIKE ?)');
-      const like = `%${filter.q}%`;
+      clauses.push(
+        `(company LIKE ? ESCAPE '\\' OR position LIKE ? ESCAPE '\\' OR location LIKE ? ESCAPE '\\')`,
+      );
+      const like = `%${escapeLike(filter.q)}%`;
       params.push(like, like, like);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
+  }
+
+  list(filter: ListFilter = {}): Application[] {
+    const { where, params } = this.buildFilter(filter);
     const rows = this.db
       .prepare(`SELECT * FROM applications ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
       .all(...params, filter.limit ?? 100, filter.offset ?? 0) as unknown as ApplicationRow[];
     return rows.map(toApplication);
+  }
+
+  /** Total matching the filter, ignoring limit/offset — for X-Total-Count. */
+  countFiltered(filter: ListFilter = {}): number {
+    const { where, params } = this.buildFilter(filter);
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM applications ${where}`)
+      .get(...params) as { n: number };
+    return row.n;
   }
 
   getById(id: string): Application | null {
