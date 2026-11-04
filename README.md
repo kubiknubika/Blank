@@ -107,17 +107,17 @@ docker run -p 3000:3000 -v offerflow-data:/data offerflow
 
 ## API reference
 
-| Method   | Endpoint                       | Description                              |
-| -------- | ------------------------------ | ---------------------------------------- |
-| `GET`    | `/api/health`                  | Health check + application count         |
+| Method   | Endpoint                       | Description                                                            |
+| -------- | ------------------------------ | ---------------------------------------------------------------------- |
+| `GET`    | `/api/health`                  | Health check + application count                                       |
 | `GET`    | `/api/applications`            | List; `?status=`, `?q=`, `?limit=`, `?offset=`; `X-Total-Count` header |
-| `POST`   | `/api/applications`            | Create (Zod-validated)                   |
-| `GET`    | `/api/applications/:id`        | Details with full event timeline         |
-| `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes |
-| `DELETE` | `/api/applications/:id`        | Delete (cascades events)                 |
-| `POST`   | `/api/applications/:id/events` | Log a note / call / email / task         |
-| `GET`    | `/api/analytics/overview`      | Aggregated metrics for the dashboard     |
-| `POST`   | `/api/demo/reset`              | Restore the demo dataset                 |
+| `POST`   | `/api/applications`            | Create (Zod-validated)                                                 |
+| `GET`    | `/api/applications/:id`        | Details with full event timeline                                       |
+| `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes                               |
+| `DELETE` | `/api/applications/:id`        | Delete (cascades events)                                               |
+| `POST`   | `/api/applications/:id/events` | Log a note / call / email / task                                       |
+| `GET`    | `/api/analytics/overview`      | Aggregated metrics for the dashboard                                   |
+| `POST`   | `/api/demo/reset`              | Restore the demo dataset                                               |
 
 Validation errors return `400` with a structured `details` array (`{ path, message }`) that the UI maps onto form fields.
 
