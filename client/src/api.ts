@@ -1,17 +1,25 @@
 import type {
   AnalyticsOverview,
+  ApiErrorBody,
   Application,
   ApplicationWithEvents,
   AppEvent,
+  ErrorCode,
   EventType,
   Status,
 } from './types';
 
+/**
+ * Typed API client. Errors preserve the server's machine-readable code
+ * and the request id, so failures are traceable end-to-end.
+ */
 export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    public code?: ErrorCode,
     public details?: { path: string; message: string }[],
+    public requestId?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -26,7 +34,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status, body?.details);
+    const err = (body ?? {}) as Partial<ApiErrorBody>;
+    throw new ApiError(
+      err.error ?? `Request failed (${res.status})`,
+      res.status,
+      err.code,
+      err.details,
+      err.requestId ?? res.headers.get('x-request-id') ?? undefined,
+    );
   }
   return body as T;
 }

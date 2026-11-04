@@ -4,6 +4,7 @@ import {
   PRIORITY_LABELS,
   SOURCE_LABELS,
   STATUS_META,
+  USER_EVENT_TYPES,
   WORK_MODE_LABELS,
   type Application,
   type ApplicationWithEvents,
@@ -34,8 +35,6 @@ const EVENT_ICONS: Record<EventType, string> = {
   email: '✉️',
   task: '✅',
 };
-
-const USER_EVENT_TYPES: EventType[] = ['note', 'call', 'email', 'task'];
 
 export function DetailDrawer({
   appId,
