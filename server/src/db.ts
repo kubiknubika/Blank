@@ -49,6 +49,13 @@ const MIGRATIONS: { id: number; name: string; up: string }[] = [
     name: 'events-created-at-index',
     up: `CREATE INDEX idx_events_created_at ON events(created_at DESC);`,
   },
+  {
+    id: 3,
+    name: 'applications-version',
+    // Optimistic concurrency: every field update bumps version; writers
+    // may pass If-Match to detect lost updates. Existing rows start at 1.
+    up: `ALTER TABLE applications ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`,
+  },
 ];
 
 export interface DbOptions {

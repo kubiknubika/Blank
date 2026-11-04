@@ -9,6 +9,7 @@ import {
 import { buildOverview } from '../analytics.js';
 import { seedDatabase } from '../seed.js';
 import type { ApplicationService } from '../service.js';
+import { parseIfMatch, versionEtag } from './concurrency.js';
 
 /**
  * Thin HTTP layer: parse → delegate → serialize. No business logic,
@@ -36,12 +37,17 @@ export function createApiRouter(service: ApplicationService, db: DatabaseSync): 
   });
 
   api.get('/applications/:id', (req, res) => {
-    res.json(service.get(req.params.id));
+    const app = service.get(req.params.id);
+    res.setHeader('ETag', versionEtag(app.version));
+    res.json(app);
   });
 
   api.patch('/applications/:id', (req, res) => {
     const input = updateApplicationSchema.parse(req.body);
-    res.json(service.update(req.params.id, input));
+    const expectedVersion = parseIfMatch(req.headers['if-match']);
+    const app = service.update(req.params.id, input, expectedVersion);
+    res.setHeader('ETag', versionEtag(app.version));
+    res.json(app);
   });
 
   api.delete('/applications/:id', (req, res) => {

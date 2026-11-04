@@ -39,3 +39,10 @@ export class UnsupportedMediaTypeError extends AppError {
     super(message, 'UNSUPPORTED_MEDIA_TYPE', 415);
   }
 }
+
+/** If-Match did not match the current row version — a lost-update guard. */
+export class PreconditionFailedError extends AppError {
+  constructor(message = 'Application was modified by another request. Refresh and retry.') {
+    super(message, 'PRECONDITION_FAILED', 412);
+  }
+}

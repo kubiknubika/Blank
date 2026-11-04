@@ -37,9 +37,15 @@ export default function App() {
   }, [apps, query]);
 
   const handleSubmit = useCallback(
-    async (input: Partial<ApplicationInput>) => {
+    async (input: Partial<ApplicationInput>, baseVersion?: number) => {
       if (editing) {
-        await api.updateApplication(editing.id, input);
+        // Form edits carry the version the user started from: if another
+        // tab saved first, the API answers 412 instead of silently
+        // overwriting their changes (drag-and-drop moves stay last-write-
+        // wins — they are single-intent and race-guarded client-side).
+        await api.updateApplication(editing.id, input, {
+          ifMatch: baseVersion ?? editing.version,
+        });
         pushToast('Application updated');
       } else {
         await api.createApplication(input);

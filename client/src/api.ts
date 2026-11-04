@@ -97,9 +97,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updateApplication: (id: string, input: Partial<ApplicationInput>) =>
+  updateApplication: (id: string, input: Partial<ApplicationInput>, opts?: { ifMatch?: number }) =>
     request<ApplicationWithEvents>(`/applications/${id}`, {
       method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(opts?.ifMatch !== undefined ? { 'If-Match': `"${opts.ifMatch}"` } : {}),
+      },
       body: JSON.stringify(input),
     }),
   deleteApplication: (id: string) => request<void>(`/applications/${id}`, { method: 'DELETE' }),

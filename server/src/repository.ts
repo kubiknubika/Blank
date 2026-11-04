@@ -26,6 +26,7 @@ interface ApplicationRow {
   applied_at: string | null;
   created_at: string;
   updated_at: string;
+  version: number;
 }
 
 interface EventRow {
@@ -54,6 +55,7 @@ function toApplication(row: ApplicationRow): Application {
     appliedAt: row.applied_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    version: row.version,
   };
 }
 
@@ -173,7 +175,18 @@ export class ApplicationRepository {
     return this.getById(id)!;
   }
 
-  update(id: string, input: UpdateApplicationInput, now: string): Application {
+  /**
+   * Bumps version on every field update. With expectedVersion the UPDATE
+   * is conditional (WHERE version = ?): 0 changed rows → null, which the
+   * service turns into 412. The caller runs inside a transaction, so the
+   * existence check and the conditional write cannot interleave.
+   */
+  update(
+    id: string,
+    input: UpdateApplicationInput,
+    now: string,
+    expectedVersion?: number,
+  ): Application | null {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
@@ -182,9 +195,15 @@ export class ApplicationRepository {
         params.push((input as Record<string, string | number | null>)[field]);
       }
     }
-    sets.push('updated_at = ?');
+    sets.push('updated_at = ?', 'version = version + 1');
     params.push(now, id);
-    this.db.prepare(`UPDATE applications SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    let sql = `UPDATE applications SET ${sets.join(', ')} WHERE id = ?`;
+    if (expectedVersion !== undefined) {
+      sql += ' AND version = ?';
+      params.push(expectedVersion);
+    }
+    const result = this.db.prepare(sql).run(...params);
+    if (result.changes === 0) return null;
     return this.getById(id)!;
   }
 

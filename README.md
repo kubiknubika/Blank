@@ -17,7 +17,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 - **Analytics dashboard** — response rate, offer rate, median salary, weekly activity chart, pipeline funnel, and source effectiveness (which channel actually produces offers)
 - **Activity timeline** — every status change is recorded automatically; log calls, emails, notes, and tasks per application
 - **Touch & keyboard friendly** — change status right in the detail drawer (HTML5 drag-and-drop doesn't exist on touch screens)
-- **Full CRUD** — create/edit forms with client- and server-side validation, search by company/role/location
+- **Full CRUD** — create/edit forms with client- and server-side validation, search by company/role/location; concurrent edits are conflict-checked (`412` + "Load latest", never a silent overwrite)
 - **Demo mode** — one-click reset to a realistic seeded dataset (16 applications across European tech companies)
 - **Zero-dependency charts** — SVG charts hand-built without chart libraries
 - **Production-ready** — Docker multi-stage build, GitHub Actions CI, health checks, strict TypeScript everywhere
@@ -29,7 +29,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 | Frontend | React 18, TypeScript (strict), Vite, hand-rolled SVG charts   |
 | Backend  | Node.js 22.13+, Express 5, Zod validation                     |
 | Database | SQLite via built-in `node:sqlite` (no native deps, WAL mode)  |
-| Testing  | Vitest, Supertest, Testing Library — 110 tests                |
+| Testing  | Vitest, Supertest, Testing Library — 127 tests                |
 | Tooling  | ESLint 9 (flat config), Prettier, npm workspaces              |
 | DevOps   | GitHub Actions CI, multi-stage Dockerfile, non-root container |
 
@@ -107,17 +107,17 @@ docker run -p 3000:3000 -v offerflow-data:/data offerflow
 
 ## API reference
 
-| Method   | Endpoint                       | Description                                                            |
-| -------- | ------------------------------ | ---------------------------------------------------------------------- |
-| `GET`    | `/api/health`                  | Health check + application count                                       |
-| `GET`    | `/api/applications`            | List; `?status=`, `?q=`, `?limit=`, `?offset=`; `X-Total-Count` header |
-| `POST`   | `/api/applications`            | Create (Zod-validated)                                                 |
-| `GET`    | `/api/applications/:id`        | Details with full event timeline                                       |
-| `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes                               |
-| `DELETE` | `/api/applications/:id`        | Delete (cascades events)                                               |
-| `POST`   | `/api/applications/:id/events` | Log a note / call / email / task                                       |
-| `GET`    | `/api/analytics/overview`      | Aggregated metrics for the dashboard                                   |
-| `POST`   | `/api/demo/reset`              | Restore the demo dataset                                               |
+| Method   | Endpoint                       | Description                                                                            |
+| -------- | ------------------------------ | -------------------------------------------------------------------------------------- |
+| `GET`    | `/api/health`                  | Health check + application count                                                       |
+| `GET`    | `/api/applications`            | List; `?status=`, `?q=`, `?limit=`, `?offset=`; `X-Total-Count` header                 |
+| `POST`   | `/api/applications`            | Create (Zod-validated)                                                                 |
+| `GET`    | `/api/applications/:id`        | Details with full event timeline                                                       |
+| `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes; optional `If-Match` → `412` on stale version |
+| `DELETE` | `/api/applications/:id`        | Delete (cascades events)                                                               |
+| `POST`   | `/api/applications/:id/events` | Log a note / call / email / task                                                       |
+| `GET`    | `/api/analytics/overview`      | Aggregated metrics for the dashboard                                                   |
+| `POST`   | `/api/demo/reset`              | Restore the demo dataset                                                               |
 
 Validation errors return `400` with a structured `details` array (`{ path, message }`) that the UI maps onto form fields.
 
@@ -140,6 +140,7 @@ npm test
 - **API tests** (Supertest): CRUD, filtering, pagination (`X-Total-Count`, page tiling), literal `%`/`_`/`\` search, validation edge cases, coded errors (`VALIDATION_FAILED`, `NOT_FOUND`, `INVALID_JSON`), request-id propagation and sanitization, analytics correctness, empty-DB safety
 - **Security tests**: cross-site CSRF rejected (including bodyless `demo/reset`), same-origin and trusted-origin flows, `415` for non-JSON mutations, Host allowlist vs DNS rebinding, SPA-fallback route-syntax regression
 - **Service tests**: business rules with an injected clock — deterministic timestamps, `appliedAt` stamping rules, atomic rollback of a failing demo reset, SAVEPOINT semantics
+- **Concurrency tests**: `ETag`/`If-Match` matrix (stale write → `412` without clobbering or phantom events, malformed preconditions → `400`, version backfill migration); client conflict flow (banner → rebase → resubmit with the fresh version)
 - **Migration & contention tests**: idempotency, baselining a legacy database, persistence across reopen, CHECK constraints; `busy_timeout` actually waits under a held lock, `BEGIN IMMEDIATE` holds the write lock from the start, and the WAL deferred-upgrade hazard is reproduced as a documented anti-test
 - **Config/logger tests**: fail-fast env validation, allowlist parsing, log levels, structured bindings
 - **Client tests**: salary/date formatting, relative time, avatar colors; optimistic-overlay merge rules; hook-level race regressions (stale refetch discarded, superseded move failure doesn't roll back newer state, in-flight refetch doesn't clobber a pending move); API-client paging; drawer load-race and no-refetch-on-rerender guarantees — two overlapping calls resolved out of order, not happy-path-only
@@ -186,6 +187,7 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 - **Migrations + transactions** ([ADR-0003](docs/adr/0003-migrations-and-transactions.md)) — forward-only schema history, baselining for legacy DBs, atomic multi-writes via re-entrant SAVEPOINTs, CHECK constraints as a safety net.
 - **Observability + lifecycle** ([ADR-0004](docs/adr/0004-observability-and-lifecycle.md)) — structured logs, request ids end-to-end, fail-fast config, graceful shutdown.
 - **Hardening from field reports** ([ADR-0005](docs/adr/0005-hardening-from-field-reports.md)) — every fix traced to a published issue in our exact stack: `busy_timeout` + `BEGIN IMMEDIATE` for SQLite lock errors, a real Node floor, Vite Host allowlist instead of `allowedHosts: true`, CSRF/Origin/Content-Type guards, and race-proof optimistic UI.
+- **Optimistic concurrency** ([ADR-0006](docs/adr/0006-optimistic-concurrency.md)) — row versions + `ETag`/`If-Match`: form edits from a stale tab get `412` with a "Load latest" rebase flow instead of silently overwriting another tab's save; intent-style drag moves stay last-write-wins.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
 - **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; the drawer's status select covers touch devices and keyboard users.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.

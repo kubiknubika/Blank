@@ -53,6 +53,8 @@ export interface Application {
   appliedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Monotonic row version for optimistic concurrency (ETag / If-Match). */
+  version: number;
 }
 
 export interface AppEvent {
@@ -89,6 +91,7 @@ export const ERROR_CODES = [
   'INVALID_JSON',
   'FORBIDDEN',
   'UNSUPPORTED_MEDIA_TYPE',
+  'PRECONDITION_FAILED',
   'INTERNAL',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

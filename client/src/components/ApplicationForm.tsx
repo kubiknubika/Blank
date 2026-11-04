@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { ApiError, type ApplicationInput } from '../api';
+import { api, ApiError, type ApplicationInput } from '../api';
 import {
   PRIORITIES,
   PRIORITY_LABELS,
@@ -14,7 +14,8 @@ import {
 
 interface ApplicationFormProps {
   initial: Application | null;
-  onSubmit: (input: Partial<ApplicationInput>) => Promise<void>;
+  /** baseVersion is the row version the edit is based on (for If-Match). */
+  onSubmit: (input: Partial<ApplicationInput>, baseVersion?: number) => Promise<void>;
   onClose: () => void;
 }
 
@@ -35,30 +36,76 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [conflict, setConflict] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  // The version this edit is based on; advances after "Load latest" so a
+  // resubmit compares against the fresh row, not the stale opening snapshot.
+  const [baseVersion, setBaseVersion] = useState(initial?.version);
+
+  const applyToFields = (a: Application) => {
+    setCompany(a.company);
+    setPosition(a.position);
+    setStatus(a.status);
+    setSource(a.source);
+    setPriority(a.priority);
+    setLocation(a.location ?? '');
+    setWorkMode(a.workMode);
+    setSalaryMin(a.salaryMin?.toString() ?? '');
+    setSalaryMax(a.salaryMax?.toString() ?? '');
+    setCurrency(a.currency);
+    setUrl(a.url ?? '');
+    setNotes(a.notes ?? '');
+    setAppliedAt(a.appliedAt ?? '');
+  };
+
+  // 412 recovery: pull the version another tab committed and let the user
+  // re-apply their intent on top of it, instead of a dead-end error.
+  const handleReloadLatest = async () => {
+    if (!initial) return;
+    setReloading(true);
+    try {
+      const latest = await api.getApplication(initial.id);
+      applyToFields(latest);
+      setBaseVersion(latest.version);
+      setConflict(false);
+      setError(null);
+    } catch {
+      setError('Failed to load the latest version. Try again.');
+    } finally {
+      setReloading(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
     setFieldErrors({});
+    setConflict(false);
     try {
-      await onSubmit({
-        company: company.trim(),
-        position: position.trim(),
-        status,
-        source,
-        priority,
-        location: location.trim() || null,
-        workMode,
-        salaryMin: salaryMin === '' ? null : Number(salaryMin),
-        salaryMax: salaryMax === '' ? null : Number(salaryMax),
-        currency,
-        url: url.trim() || null,
-        notes: notes.trim() || null,
-        appliedAt: appliedAt || null,
-      });
+      await onSubmit(
+        {
+          company: company.trim(),
+          position: position.trim(),
+          status,
+          source,
+          priority,
+          location: location.trim() || null,
+          workMode,
+          salaryMin: salaryMin === '' ? null : Number(salaryMin),
+          salaryMax: salaryMax === '' ? null : Number(salaryMax),
+          currency,
+          url: url.trim() || null,
+          notes: notes.trim() || null,
+          appliedAt: appliedAt || null,
+        },
+        initial ? baseVersion : undefined,
+      );
     } catch (err) {
-      if (err instanceof ApiError && err.details) {
+      if (err instanceof ApiError && err.code === 'PRECONDITION_FAILED') {
+        setConflict(true);
+        setError('This application was changed in another tab while you were editing.');
+      } else if (err instanceof ApiError && err.details) {
         const map: Record<string, string> = {};
         for (const d of err.details) map[d.path] = d.message;
         setFieldErrors(map);
@@ -208,6 +255,21 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
             />
           </Field>
           {error && <p className="form-error">{error}</p>}
+          {conflict && initial && (
+            <div className="conflict-banner" role="alert">
+              <span>
+                Load the latest version to continue — your unsaved edits will be replaced.
+              </span>
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={() => void handleReloadLatest()}
+                disabled={reloading}
+              >
+                {reloading ? 'Loading…' : 'Load latest'}
+              </button>
+            </div>
+          )}
           <footer className="modal-footer">
             <button type="button" className="btn ghost" onClick={onClose}>
               Cancel

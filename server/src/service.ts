@@ -7,7 +7,7 @@ import type {
   UpdateApplicationInput,
 } from '@offerflow/shared/schemas';
 import { transaction } from './db.js';
-import { NotFoundError } from './errors.js';
+import { NotFoundError, PreconditionFailedError } from './errors.js';
 import { ApplicationRepository } from './repository.js';
 
 /**
@@ -58,7 +58,17 @@ export class ApplicationService {
     });
   }
 
-  update(id: string, input: UpdateApplicationInput): ApplicationWithEvents {
+  /**
+   * expectedVersion (from If-Match) makes this a compare-and-swap: a
+   * concurrent writer that committed first causes 412 instead of a silent
+   * lost update. Omitted → last-write-wins, kept for intent-style writes
+   * (drag-and-drop status moves) and backward compatibility.
+   */
+  update(
+    id: string,
+    input: UpdateApplicationInput,
+    expectedVersion?: number,
+  ): ApplicationWithEvents {
     const now = this.now().toISOString();
     return transaction(this.db, () => {
       const existing = this.repo.getById(id);
@@ -75,7 +85,8 @@ export class ApplicationService {
         patch.appliedAt = now.slice(0, 10);
       }
 
-      const app = this.repo.update(id, patch, now);
+      const app = this.repo.update(id, patch, now, expectedVersion);
+      if (!app) throw new PreconditionFailedError();
       if (statusChanged) {
         this.repo.insertEvent(
           id,

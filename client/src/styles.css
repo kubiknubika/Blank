@@ -724,6 +724,17 @@ a {
   color: var(--text, #1e293b);
   background: var(--surface, #fff);
 }
+.conflict-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 13px;
+}
 .drawer-body {
   flex: 1;
   overflow-y: auto;
