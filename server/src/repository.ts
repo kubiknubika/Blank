@@ -1,11 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import type { Application, AppEvent, ApplicationWithEvents, EventType, Status } from './types.js';
-import type {
-  CreateApplicationInput,
-  CreateEventInput,
-  UpdateApplicationInput,
-} from './validation.js';
+import type { Application, AppEvent, EventType, Status } from '@offerflow/shared';
+import type { CreateApplicationInput, UpdateApplicationInput } from '@offerflow/shared/schemas';
+
+/**
+ * Pure data access. No business rules here — the service layer owns those.
+ * Every method is synchronous because node:sqlite is synchronous; callers
+ * that need atomicity wrap calls in transaction().
+ */
 
 interface ApplicationRow {
   id: string;
@@ -65,7 +67,7 @@ function toEvent(row: EventRow): AppEvent {
   };
 }
 
-const FIELD_TO_COLUMN: Record<string, string> = {
+const FIELD_TO_COLUMN = {
   company: 'company',
   position: 'position',
   status: 'status',
@@ -79,12 +81,14 @@ const FIELD_TO_COLUMN: Record<string, string> = {
   url: 'url',
   notes: 'notes',
   appliedAt: 'applied_at',
-};
+} as const satisfies Record<string, string>;
 
 export class ApplicationRepository {
   constructor(private db: DatabaseSync) {}
 
-  list(filter: { status?: Status; q?: string } = {}): Application[] {
+  list(
+    filter: { status?: Status; q?: string; limit?: number; offset?: number } = {},
+  ): Application[] {
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (filter.status) {
@@ -98,24 +102,19 @@ export class ApplicationRepository {
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db
-      .prepare(`SELECT * FROM applications ${where} ORDER BY updated_at DESC`)
-      .all(...params) as unknown as ApplicationRow[];
+      .prepare(`SELECT * FROM applications ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, filter.limit ?? 100, filter.offset ?? 0) as unknown as ApplicationRow[];
     return rows.map(toApplication);
   }
 
-  getById(id: string): ApplicationWithEvents | null {
+  getById(id: string): Application | null {
     const row = this.db.prepare('SELECT * FROM applications WHERE id = ?').get(id) as
       ApplicationRow | undefined;
-    if (!row) return null;
-    const events = this.db
-      .prepare('SELECT * FROM events WHERE application_id = ? ORDER BY created_at DESC')
-      .all(id) as unknown as EventRow[];
-    return { ...toApplication(row), events: events.map(toEvent) };
+    return row ? toApplication(row) : null;
   }
 
-  create(input: CreateApplicationInput): ApplicationWithEvents {
+  insert(input: CreateApplicationInput, now: string): Application {
     const id = randomUUID();
-    const now = new Date().toISOString();
     this.db
       .prepare(
         `INSERT INTO applications
@@ -141,14 +140,10 @@ export class ApplicationRepository {
         now,
         now,
       );
-    this.addEvent(id, 'created', `Application created for ${input.position} at ${input.company}`);
     return this.getById(id)!;
   }
 
-  update(id: string, input: UpdateApplicationInput): ApplicationWithEvents | null {
-    const existing = this.getById(id);
-    if (!existing) return null;
-
+  update(id: string, input: UpdateApplicationInput, now: string): Application {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
@@ -157,19 +152,10 @@ export class ApplicationRepository {
         params.push((input as Record<string, string | number | null>)[field]);
       }
     }
-    const now = new Date().toISOString();
     sets.push('updated_at = ?');
     params.push(now, id);
     this.db.prepare(`UPDATE applications SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-
-    if (input.status && input.status !== existing.status) {
-      this.addEvent(id, 'status', `Status changed: ${existing.status} → ${input.status}`);
-      if (input.status === 'applied' && !existing.appliedAt && input.appliedAt === undefined) {
-        const today = now.slice(0, 10);
-        this.db.prepare('UPDATE applications SET applied_at = ? WHERE id = ?').run(today, id);
-      }
-    }
-    return this.getById(id);
+    return this.getById(id)!;
   }
 
   delete(id: string): boolean {
@@ -177,9 +163,8 @@ export class ApplicationRepository {
     return result.changes > 0;
   }
 
-  addEvent(applicationId: string, type: EventType, message: string): AppEvent {
+  insertEvent(applicationId: string, type: EventType, message: string, now: string): AppEvent {
     const id = randomUUID();
-    const now = new Date().toISOString();
     this.db
       .prepare(
         'INSERT INTO events (id, application_id, type, message, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -188,14 +173,20 @@ export class ApplicationRepository {
     return { id, applicationId, type, message, createdAt: now };
   }
 
-  createUserEvent(applicationId: string, input: CreateEventInput): AppEvent | null {
-    const exists = this.db.prepare('SELECT 1 FROM applications WHERE id = ?').get(applicationId);
-    if (!exists) return null;
-    return this.addEvent(applicationId, input.type, input.message);
+  listEvents(applicationId: string): AppEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE application_id = ? ORDER BY created_at DESC, rowid DESC')
+      .all(applicationId) as unknown as EventRow[];
+    return rows.map(toEvent);
   }
 
   count(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS n FROM applications').get() as { n: number };
     return row.n;
+  }
+
+  deleteAll(): void {
+    // events first: explicit order keeps intent clear even though FK cascade exists
+    this.db.exec('DELETE FROM events; DELETE FROM applications;');
   }
 }

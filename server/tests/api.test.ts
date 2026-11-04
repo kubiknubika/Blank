@@ -3,12 +3,12 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { createDb } from '../src/db.js';
 import { createApp } from '../src/app.js';
-import { ApplicationRepository } from '../src/repository.js';
+import { ApplicationService } from '../src/service.js';
 import { seedDatabase } from '../src/seed.js';
 
-function makeApp(): { app: Express; repo: ApplicationRepository } {
+function makeApp(): { app: Express; service: ApplicationService } {
   const db = createDb(':memory:');
-  return { app: createApp(db), repo: new ApplicationRepository(db) };
+  return { app: createApp({ db }), service: new ApplicationService(db) };
 }
 
 const validPayload = {
@@ -23,16 +23,26 @@ const validPayload = {
 
 describe('Applications API', () => {
   let app: Express;
-  let repo: ApplicationRepository;
+  let service: ApplicationService;
 
   beforeEach(() => {
-    ({ app, repo } = makeApp());
+    ({ app, service } = makeApp());
   });
 
   it('GET /api/health returns ok', async () => {
     const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  it('attaches a request id to every response', async () => {
+    const res = await request(app).get('/api/health');
+    expect(res.headers['x-request-id']).toMatch(/[0-9a-f-]{36}/);
+  });
+
+  it('echoes a caller-provided request id', async () => {
+    const res = await request(app).get('/api/health').set('x-request-id', 'trace-me-123');
+    expect(res.headers['x-request-id']).toBe('trace-me-123');
   });
 
   it('POST /api/applications creates an application with defaults', async () => {
@@ -48,11 +58,14 @@ describe('Applications API', () => {
     expect(res.body.events[0].type).toBe('created');
   });
 
-  it('POST /api/applications rejects invalid payloads', async () => {
+  it('validation errors carry a machine-readable code and field details', async () => {
     const res = await request(app).post('/api/applications').send({ company: '' });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Validation failed');
+    expect(res.body.code).toBe('VALIDATION_FAILED');
+    expect(res.body.requestId).toBeTruthy();
     expect(res.body.details.length).toBeGreaterThan(0);
+    expect(res.body.details[0]).toHaveProperty('path');
+    expect(res.body.details[0]).toHaveProperty('message');
   });
 
   it('POST /api/applications rejects salaryMin > salaryMax', async () => {
@@ -67,6 +80,15 @@ describe('Applications API', () => {
       .post('/api/applications')
       .send({ ...validPayload, url: 'not-a-url' });
     expect(res.status).toBe(400);
+  });
+
+  it('malformed JSON returns INVALID_JSON, not a crash', async () => {
+    const res = await request(app)
+      .post('/api/applications')
+      .set('Content-Type', 'application/json')
+      .send('{broken');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_JSON');
   });
 
   it('GET /api/applications lists and filters by status and search', async () => {
@@ -88,9 +110,22 @@ describe('Applications API', () => {
     expect(searched.body[0].company).toBe('Acme Corp');
   });
 
-  it('GET /api/applications/:id returns 404 for unknown id', async () => {
+  it('GET /api/applications supports limit and offset', async () => {
+    for (let i = 0; i < 5; i++) {
+      await request(app)
+        .post('/api/applications')
+        .send({ company: `Co ${i}`, position: 'FE' });
+    }
+    const page = await request(app).get('/api/applications?limit=2&offset=0');
+    expect(page.body).toHaveLength(2);
+    const bad = await request(app).get('/api/applications?limit=9999');
+    expect(bad.status).toBe(400);
+  });
+
+  it('GET /api/applications/:id returns a coded 404 for unknown id', async () => {
     const res = await request(app).get('/api/applications/does-not-exist');
     expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
   });
 
   it('PATCH updates fields and records a status-change event', async () => {
@@ -126,7 +161,7 @@ describe('Applications API', () => {
     const id = created.body.id;
     const res = await request(app).delete(`/api/applications/${id}`);
     expect(res.status).toBe(204);
-    expect(repo.getById(id)).toBeNull();
+    expect(() => service.get(id)).toThrow(/not found/);
     const gone = await request(app).get(`/api/applications/${id}`);
     expect(gone.status).toBe(404);
   });
@@ -150,12 +185,19 @@ describe('Applications API', () => {
       .send({ type: 'status', message: 'fake' });
     expect(res.status).toBe(400);
   });
+
+  it('POST /applications/:id/events on unknown id returns 404', async () => {
+    const res = await request(app)
+      .post('/api/applications/nope/events')
+      .send({ type: 'note', message: 'hi' });
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('Analytics API', () => {
   it('returns a coherent overview for seeded data', async () => {
-    const { app, repo } = makeApp();
-    seedDatabase(repo);
+    const { app, service } = makeApp();
+    service.resetDemo(seedDatabase);
     const res = await request(app).get('/api/analytics/overview');
     expect(res.status).toBe(200);
     expect(res.body.totals.total).toBe(16);

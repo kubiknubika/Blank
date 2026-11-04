@@ -1,26 +1,65 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadConfig } from './config.js';
 import { createDb } from './db.js';
 import { createApp } from './app.js';
-import { ApplicationRepository } from './repository.js';
+import { createLogger } from './logger.js';
+import { ApplicationService } from './service.js';
 import { seedDatabase } from './seed.js';
 
-const PORT = Number(process.env.PORT ?? 3000);
-const DB_PATH =
-  process.env.DB_PATH ??
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data/offerflow.db');
+/**
+ * Process entry point: config → logger → db → app → graceful shutdown.
+ * Everything interesting lives in modules; this file only wires them.
+ */
+function main(): void {
+  const config = loadConfig();
+  const logger = createLogger(config.LOG_LEVEL, { env: config.NODE_ENV });
 
-const db = createDb(DB_PATH);
-const repo = new ApplicationRepository(db);
+  const db = createDb(config.DB_PATH);
+  const service = new ApplicationService(db);
 
-if (repo.count() === 0 && process.env.SEED_ON_EMPTY !== 'false') {
-  seedDatabase(repo);
-  console.log(`Seeded demo data: ${repo.count()} applications`);
+  if (config.SEED_ON_EMPTY && service.count() === 0) {
+    service.resetDemo(seedDatabase);
+    logger.info('seeded demo data', { applications: service.count() });
+  }
+
+  const clientDist = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../client/dist',
+  );
+  const app = createApp({ db, logger, clientDist });
+  const server = app.listen(config.PORT, config.HOST, () => {
+    logger.info('server listening', {
+      host: config.HOST,
+      port: config.PORT,
+      dbPath: config.DB_PATH,
+    });
+  });
+
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info('shutting down', { signal });
+
+    // Stop accepting connections, let in-flight requests finish, then close the DB.
+    const timer = setTimeout(() => {
+      logger.error('graceful shutdown timed out, forcing exit');
+      process.exit(1);
+    }, config.SHUTDOWN_TIMEOUT_MS);
+    timer.unref();
+
+    server.close((err) => {
+      if (err) logger.error('error while closing server', { error: err.message });
+      db.close();
+      logger.info('shutdown complete');
+      clearTimeout(timer);
+      process.exit(err ? 1 : 0);
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-const app = createApp(db);
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`OfferFlow API listening on http://0.0.0.0:${PORT}`);
-  console.log(`SQLite database: ${DB_PATH}`);
-});
+main();

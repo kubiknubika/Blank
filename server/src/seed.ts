@@ -1,5 +1,5 @@
-import { ApplicationRepository } from './repository.js';
-import type { Status, Source, Priority, WorkMode } from './types.js';
+import type { Status, Source, Priority, WorkMode } from '@offerflow/shared';
+import type { ApplicationService } from './service.js';
 
 interface SeedItem {
   company: string;
@@ -213,14 +213,14 @@ const SEED: SeedItem[] = [
   },
 ];
 
-export function seedDatabase(repo: ApplicationRepository): void {
+export function seedDatabase(service: ApplicationService): void {
   const now = Date.now();
   for (const item of SEED) {
     const appliedAt =
       item.daysAgoApplied != null
         ? new Date(now - item.daysAgoApplied * 86400000).toISOString().slice(0, 10)
         : null;
-    const app = repo.create({
+    const app = service.create({
       company: item.company,
       position: item.position,
       status: item.status,
@@ -236,10 +236,10 @@ export function seedDatabase(repo: ApplicationRepository): void {
       appliedAt,
     });
     if (item.status === 'interview') {
-      repo.addEvent(app.id, 'task', 'Prepare for the technical interview');
+      service.addEvent(app.id, { type: 'task', message: 'Prepare for the technical interview' });
     }
     if (item.status === 'offer') {
-      repo.addEvent(app.id, 'email', 'Received the offer letter 🎉');
+      service.addEvent(app.id, { type: 'email', message: 'Received the offer letter 🎉' });
     }
   }
 }

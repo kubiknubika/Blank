@@ -1,5 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { SOURCES, STATUSES, type AnalyticsOverview, type Source, type Status } from './types.js';
+import {
+  SOURCES,
+  STATUSES,
+  type AnalyticsOverview,
+  type Source,
+  type Status,
+} from '@offerflow/shared';
 
 function mondayOf(date: Date): Date {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
