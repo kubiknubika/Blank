@@ -27,3 +27,15 @@ export class ValidationError extends AppError {
     super('Validation failed', 'VALIDATION_FAILED', 400, details);
   }
 }
+
+export class ForbiddenError extends AppError {
+  constructor(message = 'Request forbidden') {
+    super(message, 'FORBIDDEN', 403);
+  }
+}
+
+export class UnsupportedMediaTypeError extends AppError {
+  constructor(message = 'Unsupported media type') {
+    super(message, 'UNSUPPORTED_MEDIA_TYPE', 415);
+  }
+}

@@ -22,6 +22,26 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ PORT: 'not-a-number' })).toThrow(/Invalid environment/);
     expect(() => loadConfig({ PORT: '99999' })).toThrow(/Invalid environment/);
     expect(() => loadConfig({ LOG_LEVEL: 'verbose' })).toThrow(/Invalid environment/);
+    expect(() => loadConfig({ DB_BUSY_TIMEOUT_MS: '-5' })).toThrow(/Invalid environment/);
+    expect(() => loadConfig({ DB_BUSY_TIMEOUT_MS: '90000' })).toThrow(/Invalid environment/);
+  });
+
+  it('defaults the hardening settings safely', () => {
+    const config = loadConfig({});
+    expect(config.DB_BUSY_TIMEOUT_MS).toBe(5000);
+    expect(config.TRUSTED_ORIGINS).toEqual([]);
+    expect(config.TRUSTED_HOSTS).toEqual([]);
+  });
+
+  it('parses comma-separated origin/host allowlists', () => {
+    const config = loadConfig({
+      DB_BUSY_TIMEOUT_MS: '250',
+      TRUSTED_ORIGINS: 'http://localhost:5173, https://app.example.com ,',
+      TRUSTED_HOSTS: 'App.Example.com, localhost',
+    });
+    expect(config.DB_BUSY_TIMEOUT_MS).toBe(250);
+    expect(config.TRUSTED_ORIGINS).toEqual(['http://localhost:5173', 'https://app.example.com']);
+    expect(config.TRUSTED_HOSTS).toEqual(['app.example.com', 'localhost']);
   });
 });
 

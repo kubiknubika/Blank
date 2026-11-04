@@ -19,6 +19,30 @@ const configSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(10_000),
+  // node:sqlite defaults busy_timeout to 0 → instant SQLITE_BUSY under any
+  // write contention (nodejs/node#57597). Wait instead of failing.
+  DB_BUSY_TIMEOUT_MS: z.coerce.number().int().min(0).max(60_000).default(5_000),
+  // Exact origins allowed to make state-changing requests (comma-separated).
+  TRUSTED_ORIGINS: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  // Host header allowlist (comma-separated). Empty = skip the check, which is
+  // required for dynamic preview hostnames; set in real deployments.
+  TRUSTED_HOSTS: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean),
+    ),
 });
 
 export type Config = z.infer<typeof configSchema>;

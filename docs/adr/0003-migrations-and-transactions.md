@@ -20,6 +20,10 @@ could leave an application without its `created` event.
 - **Transactions**: `transaction(db, fn)` wraps every multi-write service
   operation. It is re-entrant via SAVEPOINTs, so composed operations
   (demo reset → seed → create) participate in one outer transaction.
+  Amended by [ADR-0005](0005-hardening-from-field-reports.md): transactions
+  start with `BEGIN IMMEDIATE` (not DEFERRED) and every connection sets
+  `busy_timeout`, because WAL read→write upgrades otherwise fail instantly
+  under contention.
 - **CHECK constraints** in the schema mirror the Zod rules as a last line of
   defense — the database refuses invalid states even if a future code path
   forgets to validate.

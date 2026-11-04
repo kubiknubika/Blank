@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { api, type ApplicationInput } from './api';
-import { STATUS_META, type Application, type Status } from './types';
+import { useApplications } from './hooks/useApplications';
+import type { Application } from './types';
 import { Board } from './components/Board';
 import { Dashboard } from './components/Dashboard';
 import { ApplicationForm } from './components/ApplicationForm';
@@ -11,15 +12,11 @@ type View = 'board' | 'dashboard';
 
 export default function App() {
   const [view, setView] = useState<View>('board');
-  const [apps, setApps] = useState<Application[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Application | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [dataVersion, setDataVersion] = useState(0);
 
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'success') => {
     const id = Date.now() + Math.random();
@@ -27,26 +24,9 @@ export default function App() {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api.listApplications();
-      setApps(data);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load applications');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const bumpVersion = useCallback(() => {
-    setDataVersion((v) => v + 1);
-    void refresh();
-  }, [refresh]);
+  const { apps, loading, error, dataVersion, refresh, bumpVersion, moveApp } = useApplications({
+    notify: pushToast,
+  });
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -55,23 +35,6 @@ export default function App() {
       [a.company, a.position, a.location ?? ''].some((s) => s.toLowerCase().includes(q)),
     );
   }, [apps, query]);
-
-  const moveApp = useCallback(
-    async (id: string, status: Status) => {
-      const app = apps.find((a) => a.id === id);
-      if (!app || app.status === status) return;
-      setApps((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
-      try {
-        await api.updateApplication(id, { status });
-        pushToast(`${app.company} moved to ${STATUS_META[status].label}`);
-        bumpVersion();
-      } catch {
-        pushToast('Failed to move the application', 'error');
-        void refresh();
-      }
-    },
-    [apps, pushToast, bumpVersion, refresh],
-  );
 
   const handleSubmit = useCallback(
     async (input: Partial<ApplicationInput>) => {

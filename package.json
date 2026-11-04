@@ -10,7 +10,7 @@
     "client"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "npm run build -w shared && concurrently -n shared,server,client -c yellow,blue,magenta \"npm run dev -w shared\" \"npm run dev -w server\" \"npm run dev -w client\"",

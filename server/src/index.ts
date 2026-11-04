@@ -15,7 +15,7 @@ function main(): void {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL, { env: config.NODE_ENV });
 
-  const db = createDb(config.DB_PATH);
+  const db = createDb(config.DB_PATH, { busyTimeoutMs: config.DB_BUSY_TIMEOUT_MS });
   const service = new ApplicationService(db);
 
   if (config.SEED_ON_EMPTY && service.count() === 0) {
@@ -27,7 +27,16 @@ function main(): void {
     path.dirname(fileURLToPath(import.meta.url)),
     '../../client/dist',
   );
-  const app = createApp({ db, logger, clientDist });
+  const app = createApp({
+    db,
+    logger,
+    clientDist,
+    security: {
+      trustedOrigins: config.TRUSTED_ORIGINS,
+      trustedHosts: config.TRUSTED_HOSTS,
+      isDevelopment: config.NODE_ENV !== 'production',
+    },
+  });
   const server = app.listen(config.PORT, config.HOST, () => {
     logger.info('server listening', {
       host: config.HOST,

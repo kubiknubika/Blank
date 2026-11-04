@@ -7,14 +7,21 @@ on:
 
 jobs:
   quality:
-    name: Lint, typecheck, test, build
+    # Test the declared Node floor (22.13.0 — first release with unflagged
+    # node:sqlite) AND the latest 22.x. A floating "22" alone would never
+    # exercise the minimum our engines field promises.
+    name: Quality (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.13.0', '22']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies

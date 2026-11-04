@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { ApplicationService } from './service.js';
 import { createApiRouter } from './http/routes.js';
 import { accessLog, errorHandler, requestContext } from './http/middleware.js';
+import { securityChecks, securityHeaders, type SecurityOptions } from './http/security.js';
 import { silentLogger, type Logger } from './logger.js';
 
 export interface AppDeps {
@@ -12,18 +13,27 @@ export interface AppDeps {
   now?: () => Date;
   /** Directory with the built SPA; omitted in API-only tests. */
   clientDist?: string;
+  security?: Partial<SecurityOptions>;
 }
 
 /**
  * Composition root for the Express app. Dependencies are injected,
  * which is what makes the whole stack testable without network or disk.
  */
-export function createApp({ db, logger = silentLogger, now, clientDist }: AppDeps) {
+export function createApp({ db, logger = silentLogger, now, clientDist, security }: AppDeps) {
   const app = express();
   const service = new ApplicationService(db, now);
 
   app.disable('x-powered-by');
   app.use(requestContext(logger));
+  app.use(securityHeaders);
+  app.use(
+    securityChecks({
+      trustedOrigins: security?.trustedOrigins ?? [],
+      trustedHosts: security?.trustedHosts ?? [],
+      isDevelopment: security?.isDevelopment ?? true,
+    }),
+  );
   app.use(express.json({ limit: '256kb' }));
 
   const api = createApiRouter(service, db);

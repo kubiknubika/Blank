@@ -51,12 +51,27 @@ const MIGRATIONS: { id: number; name: string; up: string }[] = [
   },
 ];
 
-export function createDb(path: string): DatabaseSync {
+export interface DbOptions {
+  /** How long a blocked writer waits for the lock before SQLITE_BUSY. */
+  busyTimeoutMs?: number;
+}
+
+export function createDb(path: string, { busyTimeoutMs = 5_000 }: DbOptions = {}): DatabaseSync {
+  if (!Number.isInteger(busyTimeoutMs) || busyTimeoutMs < 0) {
+    throw new Error(`busyTimeoutMs must be a non-negative integer, got ${busyTimeoutMs}`);
+  }
   if (path !== ':memory:') {
     mkdirSync(dirname(path), { recursive: true });
   }
   const db = new DatabaseSync(path);
+  // busy_timeout FIRST: node:sqlite defaults it to 0, so any concurrent
+  // writer fails instantly with "database is locked" (nodejs/node#57597,
+  // nanobpm/nano-bpm#1287). Even the WAL switch below contends for the lock.
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs};`);
   db.exec('PRAGMA journal_mode = WAL;');
+  // NORMAL is the recommended WAL pairing: durable against app crashes,
+  // fsync only at checkpoints (vs. every commit with FULL).
+  db.exec('PRAGMA synchronous = NORMAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   migrate(db);
   return db;
@@ -92,7 +107,7 @@ export function migrate(db: DatabaseSync): void {
   }
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.id)) continue;
-    db.exec('BEGIN');
+    db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(migration.up);
       db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
@@ -111,7 +126,14 @@ export function migrate(db: DatabaseSync): void {
 const txDepth = new WeakMap<DatabaseSync, number>();
 
 /**
- * Run fn inside a transaction; rolls back on any throw.
+ * Run fn inside a write transaction; rolls back on any throw.
+ *
+ * BEGIN IMMEDIATE (not DEFERRED): our transactions read then write
+ * (e.g. getById → update). In WAL mode a deferred read→write upgrade
+ * fails with SQLITE_BUSY *instantly*, ignoring busy_timeout, because
+ * waiting cannot refresh a stale snapshot. Taking the write lock at
+ * BEGIN is where the busy handler actually applies.
+ *
  * Re-entrant: nested calls use SAVEPOINTs, so a failure deep in a call
  * stack (e.g. seed → create) rolls back only its own work, and the
  * outermost call decides the final commit.
@@ -119,7 +141,7 @@ const txDepth = new WeakMap<DatabaseSync, number>();
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {
   const depth = txDepth.get(db) ?? 0;
   const savepoint = `sp_${depth}`;
-  db.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`);
+  db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
   txDepth.set(db, depth + 1);
   try {
     const result = fn();

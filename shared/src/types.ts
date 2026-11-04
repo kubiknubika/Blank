@@ -83,7 +83,14 @@ export interface AnalyticsOverview {
 }
 
 /** Stable machine-readable error codes returned by the API. */
-export const ERROR_CODES = ['VALIDATION_FAILED', 'NOT_FOUND', 'INVALID_JSON', 'INTERNAL'] as const;
+export const ERROR_CODES = [
+  'VALIDATION_FAILED',
+  'NOT_FOUND',
+  'INVALID_JSON',
+  'FORBIDDEN',
+  'UNSUPPORTED_MEDIA_TYPE',
+  'INTERNAL',
+] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export interface ApiErrorBody {
