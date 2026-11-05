@@ -7,6 +7,19 @@ import { PRIORITIES, SOURCES, STATUSES, USER_EVENT_TYPES, WORK_MODES } from './t
 
 const emptyToNull = (v: unknown) => (v === '' ? null : v);
 
+/**
+ * SECURITY: only http(s) URLs. z.string().url() alone also accepts
+ * javascript: and data: schemes — rendered into <a href> that is stored
+ * XSS (a malicious CSV import could plant a script URL that runs in the
+ * app's origin when clicked). The protocol allowlist closes the hole at
+ * the contract level, for the API and CSV import alike.
+ */
+const httpUrlSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .pipe(z.url({ protocol: /^https?$/, error: 'Only http(s) URLs are allowed' }));
+
 export const createApplicationSchema = z
   .object({
     company: z.string().trim().min(1, 'Company is required').max(120),
@@ -19,9 +32,7 @@ export const createApplicationSchema = z
     salaryMin: z.number().int().min(0).max(10_000_000).nullable().optional().default(null),
     salaryMax: z.number().int().min(0).max(10_000_000).nullable().optional().default(null),
     currency: z.string().trim().length(3).default('EUR'),
-    url: z
-      .preprocess(emptyToNull, z.string().trim().url('Must be a valid URL').max(500).nullable())
-      .default(null),
+    url: z.preprocess(emptyToNull, httpUrlSchema.nullable()).default(null),
     notes: z.preprocess(emptyToNull, z.string().trim().max(5000).nullable()).default(null),
     appliedAt: z
       .preprocess(
@@ -59,10 +70,7 @@ export const updateApplicationSchema = z
     salaryMin: z.number().int().min(0).max(10_000_000).nullable(),
     salaryMax: z.number().int().min(0).max(10_000_000).nullable(),
     currency: z.string().trim().length(3),
-    url: z.preprocess(
-      emptyToNull,
-      z.string().trim().url('Must be a valid URL').max(500).nullable(),
-    ),
+    url: z.preprocess(emptyToNull, httpUrlSchema.nullable()),
     notes: z.preprocess(emptyToNull, z.string().trim().max(5000).nullable()),
     appliedAt: z.preprocess(
       emptyToNull,

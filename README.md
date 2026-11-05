@@ -36,7 +36,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 | Frontend | React 18, TypeScript (strict), Vite, hand-rolled SVG charts     |
 | Backend  | Node.js 22.13+, Express 5, Zod validation                       |
 | Database | SQLite via built-in `node:sqlite` (no native deps, WAL mode)    |
-| Testing  | Vitest, Supertest, Testing Library — 262 tests + Playwright E2E |
+| Testing  | Vitest, Supertest, Testing Library — 285 tests + Playwright E2E |
 | Tooling  | ESLint 9 (flat config), Prettier, npm workspaces                |
 | DevOps   | GitHub Actions CI, multi-stage Dockerfile, non-root container   |
 
@@ -224,6 +224,7 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 - **Authentication & multi-user** ([ADR-0008](docs/adr/0008-authentication-and-multi-user.md)) — server-side sessions (only SHA-256 of the cookie token is stored), scrypt password hashing with timing-equalized logins, ownership bound at the HTTP boundary via a scoped service facade, `404`-not-`403` cross-user semantics, a shared resettable demo account, and a separate credential rate budget.
 - **Follow-up reminders** ([ADR-0009](docs/adr/0009-follow-up-reminders.md)) — one date per application with a partial index, client-side timezone-aware bucketing, system `reminder` events, and auto-clear on rejection.
 - **CSV, archive, themes, markdown** ([ADR-0010](docs/adr/0010-csv-archive-theme-markdown.md)) — RFC 4180 export/import with formula-injection escaping and atomic validation, idempotent soft-archive with history, CSS-variable theming, and a safe-by-construction markdown subset — all with zero new dependencies.
+- **Security audit & hardening** ([ADR-0011](docs/adr/0011-security-audit.md)) — http(s)-only posting URLs (stored-XSS fix at schema, render and CSV-import layers), OWASP-baseline scrypt (N=2^17) with fail-closed hash verification, advisory-clean dependency tree including dev, plus live-probed SQLi/CSRF/traversal/isolation defenses.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
 - **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; the drawer's status select covers touch devices and keyboard users.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.

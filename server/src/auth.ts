@@ -8,9 +8,11 @@ import { ConflictError, UnauthorizedError } from './errors.js';
 /**
  * Session-based auth on node:crypto alone — no passport, no JWT library.
  *
- * Passwords: scrypt (N=16384, r=8, p=1, 64-byte key) with a per-user random
- * salt, compared in constant time. Format: scrypt$N$r$p$saltHex$hashHex —
- * parameters travel with the hash so they can be raised later.
+ * Passwords: scrypt (N=2^17, r=8, p=1, 64-byte key — the OWASP Password
+ * Storage Cheat Sheet baseline) with a per-user random salt, compared in
+ * constant time. Format: scrypt$N$r$p$saltHex$hashHex — parameters travel
+ * with the hash, so hashes created at older costs keep verifying while
+ * new ones use the current parameters.
  *
  * Sessions: the cookie carries 32 random bytes; the database stores only
  * their SHA-256. A stolen database dump therefore does not yield usable
@@ -20,7 +22,7 @@ import { ConflictError, UnauthorizedError } from './errors.js';
  * POST /api/auth/demo, and its data is shared, public and resettable.
  */
 
-const SCRYPT_N = 16384;
+const SCRYPT_N = 131072; // 2^17, OWASP baseline; ~350ms per hash here
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const KEY_LEN = 64;
@@ -52,7 +54,7 @@ export function hashPassword(password: string): string {
     N: SCRYPT_N,
     r: SCRYPT_R,
     p: SCRYPT_P,
-    maxmem: 64 * 1024 * 1024,
+    maxmem: 256 * 1024 * 1024,
   });
   return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('hex')}$${key.toString('hex')}`;
 }
@@ -62,11 +64,18 @@ export function verifyPassword(password: string, stored: string): boolean {
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
   const [, n, r, p, saltHex, hashHex] = parts;
   const expected = Buffer.from(hashHex, 'hex');
+  // Defense in depth: a tampered/corrupt row must fail closed, never
+  // succeed. An empty hashHex would derive a 0-byte key and compare
+  // equal; absurd parameters would throw instead of returning false.
+  if (expected.length !== KEY_LEN || saltHex.length !== 32) return false;
+  const cost = Number(n);
+  if (!Number.isInteger(cost) || cost < 1024 || cost > 2 ** 20) return false;
+  if (Number(r) < 1 || Number(r) > 32 || Number(p) < 1 || Number(p) > 16) return false;
   const actual = scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length, {
     N: Number(n),
     r: Number(r),
     p: Number(p),
-    maxmem: 64 * 1024 * 1024,
+    maxmem: 256 * 1024 * 1024,
   });
   return timingSafeEqual(actual, expected);
 }

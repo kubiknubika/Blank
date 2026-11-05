@@ -210,3 +210,28 @@ describe('DetailDrawer refreshKey', () => {
     await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
   });
 });
+
+describe('DetailDrawer: posting URL safety (audit regression)', () => {
+  it('renders an https posting as a link with rel=noreferrer', async () => {
+    getMock.mockResolvedValue(makeApp('a1', { url: 'https://jobs.example.com/1' }));
+    renderDrawer('a1');
+    const link = await screen.findByRole('link', { name: /Open job posting/ });
+    expect(link.getAttribute('href')).toBe('https://jobs.example.com/1');
+    expect(link.getAttribute('rel')).toBe('noreferrer');
+  });
+
+  it('legacy javascript: URL renders as inert text, never an anchor', async () => {
+    getMock.mockResolvedValue(makeApp('a1', { url: 'javascript:alert(document.domain)' }));
+    const { container } = renderDrawer('a1');
+    await screen.findByText('javascript:alert(document.domain)');
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(screen.queryByRole('link', { name: /Open job posting/ })).toBeNull();
+  });
+
+  it('legacy data: URL renders as inert text', async () => {
+    getMock.mockResolvedValue(makeApp('a1', { url: 'data:text/html,<script>alert(1)</script>' }));
+    const { container } = renderDrawer('a1');
+    await screen.findByText(/data:text\/html/);
+    expect(container.querySelector('a[href^="data:"]')).toBeNull();
+  });
+});

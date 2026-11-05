@@ -2,7 +2,7 @@
   "name": "offerflow",
   "version": "1.0.0",
   "private": true,
-  "description": "Job application tracker with a kanban pipeline and analytics — React + Express + SQLite",
+  "description": "Job application tracker with a kanban pipeline and analytics \u2014 React + Express + SQLite",
   "license": "MIT",
   "workspaces": [
     "shared",
@@ -35,5 +35,10 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.1"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.4"
+    }
   }
 }

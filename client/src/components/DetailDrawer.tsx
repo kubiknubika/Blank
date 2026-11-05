@@ -34,6 +34,16 @@ interface DetailDrawerProps {
   refreshKey?: number;
 }
 
+/** http(s) only — javascript:/data: URLs must never become anchors. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 const EVENT_ICONS: Record<EventType, string> = {
   created: '✨',
   status: '🔀',
@@ -242,9 +252,16 @@ export function DetailDrawer({
                   <>
                     <dt>Posting</dt>
                     <dd>
-                      <a href={app.url} target="_blank" rel="noreferrer">
-                        Open job posting ↗
-                      </a>
+                      {/* Defense in depth: rows saved before the schema
+                          fix may still hold javascript:/data: URLs. Only
+                          http(s) becomes a link; anything else is text. */}
+                      {isHttpUrl(app.url) ? (
+                        <a href={app.url} target="_blank" rel="noreferrer">
+                          Open job posting ↗
+                        </a>
+                      ) : (
+                        <span className="unsafe-url">{app.url}</span>
+                      )}
                     </dd>
                   </>
                 )}

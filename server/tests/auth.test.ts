@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { scryptSync, randomBytes } from 'node:crypto';
 import request from 'supertest';
 import type { Express } from 'express';
 import { createDb } from '../src/db.js';
@@ -12,7 +13,7 @@ describe('auth: password hashing', () => {
   it('produces a parameterized scrypt hash with a random salt', () => {
     const a = hashPassword('same-password');
     const b = hashPassword('same-password');
-    expect(a).toMatch(/^scrypt\$16384\$8\$1\$[0-9a-f]{32}\$[0-9a-f]{128}$/);
+    expect(a).toMatch(/^scrypt\$131072\$8\$1\$[0-9a-f]{32}\$[0-9a-f]{128}$/);
     expect(a).not.toBe(b); // per-hash salt
     expect(verifyPassword('same-password', a)).toBe(true);
     expect(verifyPassword('wrong-password', a)).toBe(false);
@@ -235,5 +236,40 @@ describe('auth: session storage', () => {
       is_demo: number;
     };
     expect(demo.is_demo).toBe(1);
+  });
+});
+
+describe('auth: verifyPassword fails closed on tampered hashes', () => {
+  it('rejects an empty derived key (would otherwise compare equal)', () => {
+    expect(verifyPassword('x', 'scrypt$16384$8$1$' + 'ab'.repeat(16) + '$')).toBe(false);
+  });
+
+  it('rejects wrong-length keys and salts', () => {
+    expect(verifyPassword('x', 'scrypt$16384$8$1$abcd$' + 'ab'.repeat(64))).toBe(false);
+    expect(verifyPassword('x', 'scrypt$16384$8$1$' + 'ab'.repeat(16) + '$' + 'ab'.repeat(32))).toBe(
+      false,
+    );
+  });
+
+  it('rejects absurd cost parameters instead of throwing', () => {
+    const salt = 'ab'.repeat(16);
+    const key = 'cd'.repeat(64);
+    expect(verifyPassword('x', `scrypt$999999999$8$1$${salt}$${key}`)).toBe(false);
+    expect(verifyPassword('x', `scrypt$16384$999$1$${salt}$${key}`)).toBe(false);
+    expect(verifyPassword('x', `scrypt$abc$8$1$${salt}$${key}`)).toBe(false);
+  });
+
+  it('legacy lower-cost hashes still verify (params travel with the hash)', () => {
+    // Simulate a pre-upgrade hash at N=16384 via the same format.
+    const salt = randomBytes(16);
+    const key = scryptSync('legacy-password', salt, 64, {
+      N: 16384,
+      r: 8,
+      p: 1,
+      maxmem: 64 * 1024 * 1024,
+    });
+    const stored = `scrypt$16384$8$1$${salt.toString('hex')}$${key.toString('hex')}`;
+    expect(verifyPassword('legacy-password', stored)).toBe(true);
+    expect(verifyPassword('wrong', stored)).toBe(false);
   });
 });
