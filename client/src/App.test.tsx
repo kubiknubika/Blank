@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react';
 import App from './App';
 import { api, UNAUTHORIZED_EVENT } from './api';
 import type { AuthUser } from './types';
@@ -94,5 +94,44 @@ describe('Tracker accessibility landmarks (ADR-0016)', () => {
     const main = screen.getByRole('main');
     expect(main.getAttribute('id')).toBe('main');
     expect(main.getAttribute('tabindex')).toBe('-1');
+  });
+});
+
+describe('Tracker offline resilience (ADR-0017)', () => {
+  const setOnLine = (value: boolean) =>
+    Object.defineProperty(window.navigator, 'onLine', { value, configurable: true });
+
+  afterEach(() => setOnLine(true));
+
+  it('shows an offline banner when the browser is offline', async () => {
+    setOnLine(false);
+    meMock.mockResolvedValue(user);
+    render(<App />);
+    await screen.findByText('Alice');
+    expect(screen.getByText(/you're offline/i)).toBeTruthy();
+  });
+
+  it('hides the banner and resyncs the board when the connection returns', async () => {
+    setOnLine(true);
+    meMock.mockResolvedValue(user);
+    render(<App />);
+    await screen.findByText('Alice');
+    await waitFor(() => expect(vi.mocked(api.listAllApplications)).toHaveBeenCalled());
+    const before = vi.mocked(api.listAllApplications).mock.calls.length;
+
+    act(() => {
+      setOnLine(false);
+      window.dispatchEvent(new Event('offline'));
+    });
+    expect(await screen.findByText(/you're offline/i)).toBeTruthy();
+
+    act(() => {
+      setOnLine(true);
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(screen.queryByText(/you're offline/i)).toBeNull());
+    await waitFor(() =>
+      expect(vi.mocked(api.listAllApplications).mock.calls.length).toBeGreaterThan(before),
+    );
   });
 });

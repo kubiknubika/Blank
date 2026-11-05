@@ -128,3 +128,95 @@ describe('ApplicationForm conflict flow', () => {
     expect(onSubmit.mock.calls[0][1]).toBeUndefined();
   });
 });
+
+describe('ApplicationForm unsaved-changes guard (ADR-0017)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks(); // drop the window.confirm spy so it can't leak
+  });
+
+  const renderForm = (onClose = vi.fn(), initial: ApplicationWithEvents | null = null) =>
+    render(
+      <ApplicationForm initial={initial} onSubmit={vi.fn(async () => {})} onClose={onClose} />,
+    );
+
+  it('a pristine form closes on Escape without asking', () => {
+    const onClose = vi.fn();
+    renderForm(onClose);
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('a pristine edit form also closes without asking', () => {
+    const onClose = vi.fn();
+    renderForm(onClose, makeApp());
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('typed changes trigger a confirm; declining keeps the form open', () => {
+    const onClose = vi.fn();
+    renderForm(onClose);
+    fireEvent.change(screen.getByPlaceholderText('Acme Corp'), { target: { value: 'New Co' } });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('confirming discards the changes and closes', () => {
+    const onClose = vi.fn();
+    renderForm(onClose);
+    fireEvent.change(screen.getByPlaceholderText('Acme Corp'), { target: { value: 'New Co' } });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('the Cancel button is guarded too', () => {
+    const onClose = vi.fn();
+    renderForm(onClose);
+    fireEvent.change(screen.getByPlaceholderText('Acme Corp'), { target: { value: 'X' } });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('beforeunload is prevented only while dirty', () => {
+    renderForm();
+    const pristine = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(pristine);
+    expect(pristine.defaultPrevented).toBe(false);
+
+    fireEvent.change(screen.getByPlaceholderText('Acme Corp'), { target: { value: 'X' } });
+    const dirty = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(dirty);
+    expect(dirty.defaultPrevented).toBe(true);
+  });
+
+  it('rebasing via "Load latest" resets the baseline (no phantom dirty)', async () => {
+    // Open on a stale row, hit a 412, load the latest, then close: the
+    // rebase must not leave the form falsely "dirty".
+    const latest = { ...makeApp(), company: 'Rebased Co', version: 5 };
+    vi.mocked(api.getApplication).mockResolvedValueOnce(latest);
+    const onClose = vi.fn();
+    const onSubmit = vi.fn(async () => {
+      throw new ApiError('changed elsewhere', 412, 'PRECONDITION_FAILED');
+    });
+    render(<ApplicationForm initial={makeApp()} onSubmit={onSubmit} onClose={onClose} />);
+    fireEvent.click(screen.getByText('Save changes'));
+    await screen.findByText('Load latest');
+    fireEvent.click(screen.getByText('Load latest'));
+    await waitFor(() => expect(screen.getByDisplayValue('Rebased Co')).toBeTruthy());
+
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+});

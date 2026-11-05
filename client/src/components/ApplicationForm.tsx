@@ -1,7 +1,10 @@
 import {
   cloneElement,
   isValidElement,
+  useCallback,
+  useEffect,
   useId,
+  useRef,
   useState,
   type FormEvent,
   type ReactElement,
@@ -52,8 +55,47 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
   // resubmit compares against the fresh row, not the stale opening snapshot.
   const [baseVersion, setBaseVersion] = useState(initial?.version);
 
+  // --- Unsaved-changes guard (ADR-0017) --------------------------------
+  // The baseline is what the form opened with (or last rebased to via
+  // "Load latest"). Any divergence is unsaved work worth protecting, so
+  // Escape / backdrop / Cancel / the close icon ask before discarding it.
+  const baselineRef = useRef(fieldValues(initial));
+  const currentValues = [
+    company,
+    position,
+    status,
+    source,
+    priority,
+    location,
+    workMode,
+    salaryMin,
+    salaryMax,
+    currency,
+    url,
+    notes,
+    appliedAt,
+    followUpAt,
+  ];
+  const dirty = currentValues.some((v, i) => v !== baselineRef.current[i]);
+
+  const requestClose = useCallback(() => {
+    if (dirty && !window.confirm('Discard unsaved changes?')) return;
+    onClose();
+  }, [dirty, onClose]);
+
+  // Also guard a tab close / reload while there is unsaved work.
+  useEffect(() => {
+    if (!dirty) return;
+    const guard = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [dirty]);
+
   // Focus trap + initial focus + Escape + focus return (ADR-0016).
-  const dialogRef = useDialog<HTMLDivElement>(onClose);
+  const dialogRef = useDialog<HTMLDivElement>(requestClose);
 
   const applyToFields = (a: Application) => {
     setCompany(a.company);
@@ -80,6 +122,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
     try {
       const latest = await api.getApplication(initial.id);
       applyToFields(latest);
+      baselineRef.current = fieldValues(latest);
       setBaseVersion(latest.version);
       setConflict(false);
       setError(null);
@@ -134,7 +177,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={requestClose}>
       <div
         ref={dialogRef}
         className="modal"
@@ -146,7 +189,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
       >
         <header className="modal-header">
           <h2>{initial ? 'Edit application' : 'New application'}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={requestClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -295,7 +338,7 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
             </div>
           )}
           <footer className="modal-footer">
-            <button type="button" className="btn ghost" onClick={onClose}>
+            <button type="button" className="btn ghost" onClick={requestClose}>
               Cancel
             </button>
             <button type="submit" className="btn primary" disabled={saving}>
@@ -334,4 +377,28 @@ function Field({ label, error, children }: { label: string; error?: string; chil
       )}
     </label>
   );
+}
+
+/**
+ * The form's field values as plain strings in a fixed order, mirroring the
+ * useState initializers exactly. Used to diff against the opening baseline
+ * and decide whether there is unsaved work (ADR-0017).
+ */
+function fieldValues(a: Application | null): string[] {
+  return [
+    a?.company ?? '',
+    a?.position ?? '',
+    a?.status ?? 'wishlist',
+    a?.source ?? 'linkedin',
+    a?.priority ?? 'medium',
+    a?.location ?? '',
+    a?.workMode ?? 'remote',
+    a?.salaryMin?.toString() ?? '',
+    a?.salaryMax?.toString() ?? '',
+    a?.currency ?? 'EUR',
+    a?.url ?? '',
+    a?.notes ?? '',
+    a?.appliedAt ?? '',
+    a?.followUpAt ?? '',
+  ];
 }

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { api } from '../api';
-import { ApiError } from '../api';
+import { ApiError, NetworkError } from '../api';
 import type { AuthUser } from '../types';
 
 type Mode = 'login' | 'register';
@@ -39,7 +39,11 @@ export function AuthScreen({ onAuth }: { onAuth: (user: AuthUser) => void }) {
             });
       onAuth(result.user);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+      setError(
+        err instanceof ApiError || err instanceof NetworkError
+          ? err.message
+          : 'Something went wrong. Try again.',
+      );
     } finally {
       setBusy(false);
     }
@@ -52,7 +56,11 @@ export function AuthScreen({ onAuth }: { onAuth: (user: AuthUser) => void }) {
       const result = await api.demo();
       onAuth(result.user);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
+      setError(
+        err instanceof ApiError || err instanceof NetworkError
+          ? err.message
+          : 'Something went wrong. Try again.',
+      );
     } finally {
       setBusy(false);
     }

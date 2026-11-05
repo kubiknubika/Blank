@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { api, ApiError } from './api';
+import { api, ApiError, NetworkError } from './api';
 import type { Application } from './types';
 
 /**
@@ -211,5 +211,33 @@ describe('api auth methods', () => {
       vi.unstubAllGlobals();
       vi.stubGlobal('fetch', fetchMock);
     }
+  });
+});
+
+describe('api network failures (ADR-0017)', () => {
+  it('wraps an unreachable server in a friendly NetworkError', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const err = await api.listApplications().catch((e) => e);
+    expect(err).toBeInstanceOf(NetworkError);
+    expect(err.message).toMatch(/Cannot reach the server/);
+  });
+
+  it('does not mask an explicit AbortError', async () => {
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
+    fetchMock.mockRejectedValueOnce(abort);
+    const err = await api.listApplications().catch((e) => e);
+    expect(err).toBe(abort);
+  });
+
+  it('a server error status is still an ApiError, not a NetworkError', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'nope', code: 'NOT_FOUND' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const err = await api.listApplications().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(NetworkError);
   });
 });

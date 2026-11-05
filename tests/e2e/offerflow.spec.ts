@@ -116,7 +116,10 @@ test('server-side validation errors surface inline without creating a card', asy
   await form.getByRole('button', { name: 'Create application' }).click();
   await expect(form.getByText('Please fix the highlighted fields.')).toBeVisible();
   await expect(form.getByText('salaryMin must not exceed salaryMax')).toBeVisible();
+  // The form is dirty now, so Cancel asks before discarding (ADR-0017).
+  page.once('dialog', (dialog) => void dialog.accept());
   await form.getByRole('button', { name: 'Cancel' }).click();
+  await expect(form).toBeHidden();
   await expect(page.locator('article.card', { hasText: company })).toHaveCount(0);
 });
 

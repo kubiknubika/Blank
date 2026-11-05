@@ -1309,3 +1309,18 @@ a:focus-visible {
     scroll-behavior: auto !important;
   }
 }
+
+/* Offline banner (ADR-0017): a caution notice, not an error — the board
+   still shows the last loaded data. Amber reads as "degraded" in both
+   themes; the light theme darkens the text for contrast. */
+.offline-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #d97706;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+}
+:root[data-theme='light'] .offline-banner {
+  color: #b45309;
+}

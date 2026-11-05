@@ -33,11 +33,32 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The server could not be reached at all — offline, DNS failure, connection
+ * refused. Distinct from ApiError, which means the server answered with an
+ * error status. Carries a friendly, user-facing message so the UI never
+ * shows the browser's raw "Failed to fetch" (ADR-0017).
+ */
+export class NetworkError extends Error {
+  constructor(message = 'Cannot reach the server. Check your connection and try again.') {
+    super(message);
+    this.name = 'NetworkError';
+  }
+}
+
 async function requestRaw(path: string, options: RequestInit = {}): Promise<Response> {
-  const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+  } catch (err) {
+    // fetch rejects (TypeError) when the network is unreachable. Surface a
+    // typed, friendly error; let an explicit AbortError pass through untouched.
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new NetworkError();
+  }
   if (!res.ok && res.status !== 204) {
     const body = (await res.json().catch(() => null)) as Partial<ApiErrorBody> | null;
     const err = body ?? {};

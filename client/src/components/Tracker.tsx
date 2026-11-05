@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, type ApplicationInput } from '../api';
 import { useApplications } from '../hooks/useApplications';
 import { useTheme } from '../hooks/useTheme';
+import { useOnline } from '../hooks/useOnline';
 import type { Application, AuthUser } from '../types';
 import { Board } from './Board';
 import { Dashboard } from './Dashboard';
@@ -36,6 +37,22 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
     notify: pushToast,
     archived: showArchived,
   });
+
+  const online = useOnline();
+  // Resync the board when the connection returns: data shown while offline
+  // may be stale. Only refresh on an offline→online transition, not on the
+  // initial (online) mount or on unrelated re-renders (ADR-0017).
+  const wasOffline = useRef(false);
+  useEffect(() => {
+    if (!online) {
+      wasOffline.current = true;
+      return;
+    }
+    if (wasOffline.current) {
+      wasOffline.current = false;
+      void refresh();
+    }
+  }, [online, refresh]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -284,6 +301,12 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
       </header>
 
       <main id="main" className="main" tabIndex={-1}>
+        {!online && (
+          <div className="offline-banner" role="status">
+            You're offline — showing the last loaded data. Saving will fail until the connection
+            returns.
+          </div>
+        )}
         {error && (
           <div className="error-banner">
             {error}{' '}
