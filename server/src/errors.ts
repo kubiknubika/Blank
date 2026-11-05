@@ -61,6 +61,13 @@ export class ConflictError extends AppError {
   }
 }
 
+/** Per-account resource quota reached (applications). */
+export class QuotaExceededError extends AppError {
+  constructor(message: string) {
+    super(message, 'QUOTA_EXCEEDED', 422);
+  }
+}
+
 /** Per-IP mutation budget exhausted; Retry-After is set by the limiter. */
 export class RateLimitedError extends AppError {
   constructor(retryAfterSeconds: number) {

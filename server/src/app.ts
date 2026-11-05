@@ -2,7 +2,8 @@ import express, { Router } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { ApplicationService } from './service.js';
+import { ApplicationService, MAX_APPLICATIONS_PER_USER, type ServiceLimits } from './service.js';
+import { MAX_EVENTS_PER_APPLICATION } from './repository.js';
 import { createApiRouter } from './http/routes.js';
 import { accessLog, errorHandler, requestContext } from './http/middleware.js';
 import { securityChecks, securityHeaders, type SecurityOptions } from './http/security.js';
@@ -32,6 +33,10 @@ export interface AppDeps {
   trustProxyHops?: number;
   /** Tighter per-IP budget for /api/auth credential endpoints. */
   credentialRateLimit?: { windowMs: number; max: number; now?: () => number };
+  /** Per-IP read budget. Defaults: 600 requests / 60s; max 0 disables. */
+  readRateLimit?: Partial<RateLimitOptions>;
+  /** Per-account resource quotas (applications, event history). */
+  limits?: Partial<ServiceLimits>;
 }
 
 // Route labels must come from a closed set: anything else collapses to
@@ -59,9 +64,15 @@ export function createApp({
   metricsEnabled = true,
   trustProxyHops = 0,
   credentialRateLimit,
+  readRateLimit,
+  limits,
 }: AppDeps) {
   const app = express();
-  const service = new ApplicationService(db, now);
+  const defaults = {
+    maxApplicationsPerUser: MAX_APPLICATIONS_PER_USER,
+    maxEventsPerApplication: MAX_EVENTS_PER_APPLICATION,
+  };
+  const service = new ApplicationService(db, now, { ...defaults, ...limits });
   const auth = new AuthService(db, now);
   const metrics = new MetricsRegistry();
   const lifecycle = createLifecycleState();
@@ -72,7 +83,7 @@ export function createApp({
   if (trustProxyHops > 0) app.set('trust proxy', trustProxyHops);
   app.disable('x-powered-by');
   app.use(requestContext(logger));
-  app.use(securityHeaders);
+  app.use(securityHeaders({ frameAncestors: security?.frameAncestors }));
   app.use(
     securityChecks({
       trustedOrigins: security?.trustedOrigins ?? [],
@@ -135,16 +146,26 @@ export function createApp({
   });
   app.use('/api', ops);
 
-  // --- mutation rate limit BEFORE body parsing: a flood of 429s should
-  // not cost a JSON parse each. Reads and probes are unaffected.
+  // --- rate limits BEFORE body parsing: a flood of 429s should not cost
+  // a JSON parse each. Mutations get the tight budget; reads get a
+  // generous one (analytics/export are CPU/egress levers, so "unlimited
+  // reads" was a DoS gap). Operational probes above responded already
+  // and never see a limiter; /api/health lives in the API router and is
+  // exempted explicitly.
   const limiter = rateLimit({
     windowMs: rateLimitOpts?.windowMs ?? 60_000,
     max: rateLimitOpts?.max ?? 120,
     now: rateLimitOpts?.now,
   });
+  const readLimiter = rateLimit({
+    windowMs: readRateLimit?.windowMs ?? 60_000,
+    max: readRateLimit?.max ?? 600,
+    now: readRateLimit?.now,
+  });
   app.use('/api', (req, res, next) => {
+    if (req.path === '/health') return next();
     if (MUTATING_METHODS.has(req.method)) return limiter(req, res, next);
-    next();
+    return readLimiter(req, res, next);
   });
 
   app.use(express.json({ limit: '256kb' }));

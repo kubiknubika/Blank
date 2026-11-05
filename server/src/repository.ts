@@ -108,8 +108,20 @@ export interface ListFilter {
   offset?: number;
 }
 
+/**
+ * Hard cap on the event history kept per application. GET /applications/:id
+ * returns the full history, so an unbounded log would be both a storage
+ * DoS (one mutation = one row, forever) and a response-amplification lever
+ * (one cheap GET pulls the entire history). The oldest entries are pruned
+ * on insert; the timeline stays useful, the resource stays bounded.
+ */
+export const MAX_EVENTS_PER_APPLICATION = 200;
+
 export class ApplicationRepository {
-  constructor(private db: DatabaseSync) {}
+  constructor(
+    private db: DatabaseSync,
+    private maxEventsPerApplication: number = MAX_EVENTS_PER_APPLICATION,
+  ) {}
 
   /** Shared WHERE builder so list() and countFiltered() can never drift. */
   private buildFilter(
@@ -240,13 +252,27 @@ export class ApplicationRepository {
         'INSERT INTO events (id, application_id, type, message, created_at) VALUES (?, ?, ?, ?, ?)',
       )
       .run(id, applicationId, type, message, now);
+    // Prune oldest beyond the cap (rowid = insertion order; created_at
+    // alone can tie within a millisecond). Runs on every insert so every
+    // read path — get/create/update return full events — stays bounded.
+    this.db
+      .prepare(
+        `DELETE FROM events WHERE application_id = ? AND id NOT IN (
+           SELECT id FROM events WHERE application_id = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT ?
+         )`,
+      )
+      .run(applicationId, applicationId, this.maxEventsPerApplication);
     return { id, applicationId, type, message, createdAt: now };
   }
 
   listEvents(applicationId: string): AppEvent[] {
     const rows = this.db
-      .prepare('SELECT * FROM events WHERE application_id = ? ORDER BY created_at DESC, rowid DESC')
-      .all(applicationId) as unknown as EventRow[];
+      .prepare(
+        `SELECT * FROM events WHERE application_id = ?
+         ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(applicationId, this.maxEventsPerApplication) as unknown as EventRow[];
     return rows.map(toEvent);
   }
 

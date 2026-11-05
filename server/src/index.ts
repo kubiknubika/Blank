@@ -37,8 +37,10 @@ function main(): void {
       trustedOrigins: config.TRUSTED_ORIGINS,
       trustedHosts: config.TRUSTED_HOSTS,
       isDevelopment: config.NODE_ENV !== 'production',
+      frameAncestors: config.CSP_FRAME_ANCESTORS || undefined,
     },
     rateLimit: { max: config.RATE_LIMIT_MAX, windowMs: config.RATE_LIMIT_WINDOW_MS },
+    readRateLimit: { max: config.READ_RATE_LIMIT_MAX, windowMs: config.RATE_LIMIT_WINDOW_MS },
     metricsEnabled: config.METRICS_ENABLED,
     trustProxyHops: config.TRUST_PROXY_HOPS,
     credentialRateLimit: {

@@ -20,6 +20,13 @@ export interface SecurityOptions {
   trustedHosts: string[];
   /** In development, loopback origins on any port are allowed (Vite proxy). */
   isDevelopment: boolean;
+  /**
+   * CSP frame-ancestors source list. Omitted by default: the hosted preview
+   * embeds the app in an iframe, and any frame-ancestors value (even
+   * 'self') would break it. Deployments that do not need embedding should
+   * set CSP_FRAME_ANCESTORS='none' (or an explicit allowlist).
+   */
+  frameAncestors?: string;
 }
 
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
@@ -77,9 +84,43 @@ export function securityChecks(options: SecurityOptions) {
   };
 }
 
-/** Cheap, universally safe response headers. */
-export function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  next();
+/**
+ * Content-Security-Policy for the built SPA. The production bundle loads
+ * only self-hosted scripts (verified against dist/index.html), so
+ * script-src 'self' blocks injected inline <script>/event handlers even
+ * if an XSS vector ever slips past React's escaping and the URL schema.
+ * Inline style ATTRIBUTES are pervasive in the React components, hence
+ * style-src 'unsafe-inline' — styles cannot execute code in modern
+ * browsers. frame-ancestors is deliberately absent unless configured:
+ * see SecurityOptions.frameAncestors (iframe preview compatibility).
+ */
+const CSP_DIRECTIVES = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+];
+
+export function securityHeaders(options: Pick<SecurityOptions, 'frameAncestors'> = {}) {
+  const csp = [...CSP_DIRECTIVES];
+  if (options.frameAncestors) csp.push(`frame-ancestors ${options.frameAncestors}`);
+  const cspValue = csp.join('; ');
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Security-Policy', cspValue);
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    // HSTS only on requests that actually arrived over TLS: sending it on
+    // plain HTTP is meaningless (browsers ignore it) but deriving it from
+    // req.secure keeps it correct behind a TLS-terminating proxy too.
+    if (req.secure) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  };
 }

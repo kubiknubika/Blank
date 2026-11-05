@@ -117,6 +117,8 @@ export const ERROR_CODES = [
   'UNSUPPORTED_MEDIA_TYPE',
   'PRECONDITION_FAILED',
   'RATE_LIMITED',
+  'PAYLOAD_TOO_LARGE',
+  'QUOTA_EXCEEDED',
   'INTERNAL',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

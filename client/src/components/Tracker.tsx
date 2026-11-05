@@ -97,7 +97,9 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
       a.href = url;
       a.download = `offerflow-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
-      URL.revokeObjectURL(url);
+      // Revoke on the next tick: some browsers resolve the download
+      // asynchronously, and revoking synchronously can cancel it.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       pushToast('CSV exported');
     } catch {
       pushToast('Export failed', 'error');
@@ -106,6 +108,13 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
 
   const handleImportFile = useCallback(
     async (file: File) => {
+      // Reject oversized files before reading them into memory — the
+      // server's 256 KiB JSON limit would bounce them anyway, and the
+      // JSON wrapper only makes the payload larger than the raw CSV.
+      if (file.size > 256 * 1024) {
+        pushToast('File is too large — the import limit is 256 KiB', 'error');
+        return;
+      }
       try {
         const csv = await file.text();
         const { imported } = await api.importCsv(csv);

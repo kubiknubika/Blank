@@ -7,9 +7,23 @@ import type {
   UpdateApplicationInput,
 } from '@offerflow/shared/schemas';
 import { transaction } from './db.js';
-import { NotFoundError, PreconditionFailedError } from './errors.js';
-import { ApplicationRepository } from './repository.js';
+import { NotFoundError, PreconditionFailedError, QuotaExceededError } from './errors.js';
+import { ApplicationRepository, MAX_EVENTS_PER_APPLICATION } from './repository.js';
 import { parseImport, toCsv } from './csv.js';
+
+/**
+ * Per-account application quota. One CSV import writes up to 1000 rows
+ * per request, so the mutation rate limit alone does not bound storage
+ * growth — without a quota a single client can add ~100k rows/minute.
+ * The cap covers active AND archived rows and is enforced inside the
+ * write transaction (create) and as an atomic pre-check (import).
+ */
+export const MAX_APPLICATIONS_PER_USER = 5000;
+
+export interface ServiceLimits {
+  maxApplicationsPerUser: number;
+  maxEventsPerApplication: number;
+}
 
 /**
  * Business rules live here, between HTTP and SQL:
@@ -57,8 +71,12 @@ export class ApplicationService {
   constructor(
     private db: DatabaseSync,
     private now: () => Date = () => new Date(),
+    private limits: ServiceLimits = {
+      maxApplicationsPerUser: MAX_APPLICATIONS_PER_USER,
+      maxEventsPerApplication: MAX_EVENTS_PER_APPLICATION,
+    },
   ) {
-    this.repo = new ApplicationRepository(db);
+    this.repo = new ApplicationRepository(db, this.limits.maxEventsPerApplication);
   }
 
   /** Global count for liveness/metrics — never user-facing data. */
@@ -70,6 +88,7 @@ export class ApplicationService {
     const repo = this.repo;
     const db = this.db;
     const now = this.now;
+    const limits = this.limits;
 
     const scope: UserScope = {
       /**
@@ -94,6 +113,11 @@ export class ApplicationService {
       create(input) {
         const ts = now().toISOString();
         return transaction(db, () => {
+          if (repo.countForUser(userId) >= limits.maxApplicationsPerUser) {
+            throw new QuotaExceededError(
+              `Application quota reached (${limits.maxApplicationsPerUser} per account, archive included). Delete rows to free space.`,
+            );
+          }
           const app = repo.insert(userId, input, ts);
           repo.insertEvent(
             app.id,
@@ -225,6 +249,14 @@ export class ApplicationService {
         // Parse + validate the WHOLE file first — a rejection writes nothing.
         const rows = parseImport(csv);
         return transaction(db, () => {
+          // Atomic quota pre-check: reject the whole file up front rather
+          // than failing on row N and rolling back a half-consumed budget.
+          const existing = repo.countForUser(userId);
+          if (existing + rows.length > limits.maxApplicationsPerUser) {
+            throw new QuotaExceededError(
+              `Import would exceed the application quota (${existing} of ${limits.maxApplicationsPerUser} used, ${rows.length} requested).`,
+            );
+          }
           for (const row of rows) {
             const created = scope.create(row.input);
             if (row.archived) scope.archive(created.id);

@@ -3,10 +3,11 @@ import { makeTestApp } from './helpers.js';
 
 /**
  * The mutation budget: a compromised script (or a buggy retry loop)
- * must not be able to hammer writes. Reads and probes stay unlimited
- * so dashboards and health checks never trip the limiter.
+ * must not be able to hammer writes. Reads have a separate, generous
+ * budget (analytics/export are CPU levers); operational probes are
+ * exempt so health checks never trip a limiter.
  */
-describe('rate limiting (per-IP, mutations only)', () => {
+describe('rate limiting (per-IP)', () => {
   let agent: ReturnType<typeof makeTestApp>['agent'];
   let clock: number;
 
@@ -40,16 +41,54 @@ describe('rate limiting (per-IP, mutations only)', () => {
     expect(list.body).toHaveLength(3); // the 4th (429) never reached the service
   });
 
-  it('GET traffic is never limited, even far beyond the budget', async () => {
+  it('reads do not consume the mutation budget; probes are exempt', async () => {
     for (let i = 0; i < 10; i++) {
       const res = await agent.get('/api/applications');
       expect(res.status).toBe(200);
+      // Reads carry their OWN generous budget (default 600), not the
+      // mutation budget of 3 configured for this test app.
+      expect(res.headers['x-ratelimit-limit']).toBe('600');
+    }
+    // The mutation budget is still intact after all those reads.
+    for (let i = 0; i < 3; i++) expect((await create()).status).toBe(201);
+    for (const probe of ['/api/health', '/api/ready', '/api/metrics', '/api/openapi.json']) {
+      const res = await agent.get(probe);
+      expect(res.status).toBe(200);
       expect(res.headers['x-ratelimit-limit']).toBeUndefined();
     }
-    const health = await agent.get('/api/health');
-    expect(health.status).toBe(200);
-    const ready = await agent.get('/api/ready');
-    expect(ready.status).toBe(200);
+  });
+
+  it('reads have their own budget, with 429 + Retry-After when exhausted', async () => {
+    const readLimited = makeTestApp({
+      readRateLimit: { windowMs: 60_000, max: 2, now: () => clock },
+    });
+    for (let i = 0; i < 2; i++) {
+      expect((await readLimited.agent.get('/api/applications')).status).toBe(200);
+    }
+    const blocked = await readLimited.agent.get('/api/applications');
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('RATE_LIMITED');
+    expect(Number(blocked.headers['retry-after'])).toBeGreaterThanOrEqual(1);
+    // Mutations are a different bucket and still work.
+    expect(
+      (await readLimited.agent.post('/api/applications').send({ company: 'Acme', position: 'FE' }))
+        .status,
+    ).toBe(201);
+    // Probes never see the read limiter even when the bucket is empty.
+    expect((await readLimited.agent.get('/api/health')).status).toBe(200);
+    expect((await readLimited.agent.get('/api/ready')).status).toBe(200);
+    // Window rollover restores the read budget.
+    clock += 60_001;
+    expect((await readLimited.agent.get('/api/applications')).status).toBe(200);
+  });
+
+  it('readRateLimit max: 0 disables the read limiter', async () => {
+    const unlimited = makeTestApp({ readRateLimit: { max: 0 } });
+    for (let i = 0; i < 8; i++) {
+      const res = await unlimited.agent.get('/api/applications');
+      expect(res.status).toBe(200);
+      expect(res.headers['x-ratelimit-limit']).toBeUndefined();
+    }
   });
 
   it('the budget resets when the window rolls over', async () => {

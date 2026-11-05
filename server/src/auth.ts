@@ -26,10 +26,19 @@ const SCRYPT_N = 131072; // 2^17, OWASP baseline; ~350ms per hash here
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const KEY_LEN = 64;
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
 
 export const SESSION_COOKIE = 'offerflow_session';
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days, absolute
 export const DEMO_USER_ID = 'demo';
+/**
+ * Concurrent-session cap per user. Without it every login/demo click adds
+ * a row that lives for 7 days — an unauthenticated caller can grow the
+ * sessions table at the credential limiter's pace, forever. Evicting the
+ * oldest beyond the cap bounds the table at users × N rows. Generous
+ * enough for the shared demo account used by many visitors at once.
+ */
+export const MAX_SESSIONS_PER_USER = 50;
 
 interface UserRow {
   id: string;
@@ -54,7 +63,7 @@ export function hashPassword(password: string): string {
     N: SCRYPT_N,
     r: SCRYPT_R,
     p: SCRYPT_P,
-    maxmem: 256 * 1024 * 1024,
+    maxmem: SCRYPT_MAXMEM,
   });
   return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('hex')}$${key.toString('hex')}`;
 }
@@ -63,21 +72,32 @@ export function verifyPassword(password: string, stored: string): boolean {
   const parts = stored.split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
   const [, n, r, p, saltHex, hashHex] = parts;
-  const expected = Buffer.from(hashHex, 'hex');
   // Defense in depth: a tampered/corrupt row must fail closed, never
-  // succeed. An empty hashHex would derive a 0-byte key and compare
-  // equal; absurd parameters would throw instead of returning false.
-  if (expected.length !== KEY_LEN || saltHex.length !== 32) return false;
+  // succeed and never throw. Buffer.from(x, 'hex') silently truncates
+  // invalid input, so validate the encodings explicitly first.
+  if (!/^[0-9a-f]{32}$/.test(saltHex) || !/^[0-9a-f]{128}$/.test(hashHex)) return false;
+  const expected = Buffer.from(hashHex, 'hex');
   const cost = Number(n);
+  const blockSize = Number(r);
+  const parallelism = Number(p);
   if (!Number.isInteger(cost) || cost < 1024 || cost > 2 ** 20) return false;
-  if (Number(r) < 1 || Number(r) > 32 || Number(p) < 1 || Number(p) > 16) return false;
-  const actual = scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length, {
-    N: Number(n),
-    r: Number(r),
-    p: Number(p),
-    maxmem: 256 * 1024 * 1024,
-  });
-  return timingSafeEqual(actual, expected);
+  if ((cost & (cost - 1)) !== 0) return false; // scrypt requires N = 2^k
+  if (!Number.isInteger(blockSize) || blockSize < 1 || blockSize > 32) return false;
+  if (!Number.isInteger(parallelism) || parallelism < 1 || parallelism > 16) return false;
+  // Reject parameter sets whose memory demand exceeds maxmem — scryptSync
+  // would throw (→ 500) instead of returning a comparison result.
+  if (128 * cost * blockSize > SCRYPT_MAXMEM) return false;
+  try {
+    const actual = scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length, {
+      N: cost,
+      r: blockSize,
+      p: parallelism,
+      maxmem: SCRYPT_MAXMEM,
+    });
+    return timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
 }
 
 // Burned on unknown-email logins so "user not found" and "wrong password"
@@ -106,11 +126,27 @@ export class AuthService {
       if (existing) throw new ConflictError('An account with this email already exists');
       const id = randomUUID();
       const displayName = input.displayName ?? input.email.split('@')[0];
-      this.db
-        .prepare(
-          'INSERT INTO users (id, email, password_hash, display_name, is_demo, created_at) VALUES (?, ?, ?, ?, 0, ?)',
-        )
-        .run(id, input.email, hashPassword(input.password), displayName, this.now().toISOString());
+      try {
+        this.db
+          .prepare(
+            'INSERT INTO users (id, email, password_hash, display_name, is_demo, created_at) VALUES (?, ?, ?, ?, 0, ?)',
+          )
+          .run(
+            id,
+            input.email,
+            hashPassword(input.password),
+            displayName,
+            this.now().toISOString(),
+          );
+      } catch (err) {
+        // The pre-check above makes this unreachable in the current
+        // single-threaded design; map the UNIQUE violation anyway so a
+        // future concurrent write path degrades to 409, never 500.
+        if ((err as { errcode?: number }).errcode === 2067) {
+          throw new ConflictError('An account with this email already exists');
+        }
+        throw err;
+      }
       this.sweepExpiredSessions();
       return this.createSession(id);
     });
@@ -165,6 +201,15 @@ export class AuthService {
         'INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
       )
       .run(hashToken(token), userId, now.toISOString(), expiresAt);
+    // Keep only the newest MAX_SESSIONS_PER_USER sessions for this user.
+    this.db
+      .prepare(
+        `DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN (
+           SELECT token_hash FROM sessions WHERE user_id = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT ?
+         )`,
+      )
+      .run(userId, userId, MAX_SESSIONS_PER_USER);
     const row = this.db
       .prepare('SELECT id, email, password_hash, display_name, is_demo FROM users WHERE id = ?')
       .get(userId) as unknown as UserRow;

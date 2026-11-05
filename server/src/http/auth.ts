@@ -25,15 +25,30 @@ declare global {
  * CI E2E on http://127.0.0.1, local curl — fully functional. The existing
  * securityChecks (Origin + JSON Content-Type) remain as defense in depth.
  *
+ * On HTTPS the cookie uses the __Host- prefix, which browsers only accept
+ * with Secure + Path=/ + no Domain — that locks it to this exact origin
+ * and defeats cookie tossing from sibling subdomains. On plain HTTP the
+ * prefix is impossible (it requires Secure), so the plain name is used;
+ * an HTTP→HTTPS switch therefore requires one re-login. The secure
+ * reader accepts ONLY the prefixed name, so a tossed plain cookie can
+ * never shadow a secure session.
+ *
  * No cookie-parser dependency: we only ever read our own single cookie.
  */
+export const HOST_SESSION_COOKIE = `__Host-${SESSION_COOKIE}`;
+
+export function sessionCookieName(secure: boolean): string {
+  return secure ? HOST_SESSION_COOKIE : SESSION_COOKIE;
+}
+
 export function readSessionCookie(req: Request): string | undefined {
   const header = req.headers.cookie;
   if (!header) return undefined;
+  const wanted = sessionCookieName(req.secure);
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === SESSION_COOKIE) {
+    if (part.slice(0, eq).trim() === wanted) {
       return part.slice(eq + 1).trim() || undefined;
     }
   }
@@ -42,7 +57,7 @@ export function readSessionCookie(req: Request): string | undefined {
 
 function setSessionCookie(res: Response, token: string, secure: boolean): void {
   const parts = [
-    `${SESSION_COOKIE}=${token}`,
+    `${sessionCookieName(secure)}=${token}`,
     'Path=/',
     `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
     'HttpOnly',
@@ -52,10 +67,16 @@ function setSessionCookie(res: Response, token: string, secure: boolean): void {
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 
-function clearSessionCookie(res: Response, secure: boolean): void {
-  const parts = [`${SESSION_COOKIE}=`, 'Path=/', 'Max-Age=0', 'HttpOnly', 'SameSite=Lax'];
-  if (secure) parts.push('Secure');
-  res.setHeader('Set-Cookie', parts.join('; '));
+function clearSessionCookie(res: Response): void {
+  // Clear BOTH names: the client may hold a plain cookie from an earlier
+  // HTTP session and a __Host- one from HTTPS. The __Host- clear must
+  // carry Secure or browsers reject it outright.
+  res.setHeader('Set-Cookie', [
+    [`${SESSION_COOKIE}=`, 'Path=/', 'Max-Age=0', 'HttpOnly', 'SameSite=Lax'].join('; '),
+    [`${HOST_SESSION_COOKIE}=`, 'Path=/', 'Max-Age=0', 'HttpOnly', 'SameSite=Lax', 'Secure'].join(
+      '; ',
+    ),
+  ]);
 }
 
 /** Populates req.user when a valid session cookie is present; never rejects. */
@@ -106,7 +127,7 @@ export function createAuthRouter(auth: AuthService, options: AuthRouterOptions =
 
   router.post('/logout', (req, res) => {
     auth.logout(readSessionCookie(req));
-    clearSessionCookie(res, req.secure);
+    clearSessionCookie(res);
     res.status(204).end();
   });
 

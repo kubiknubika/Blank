@@ -86,6 +86,40 @@ export function errorHandler(logger: Logger) {
       return;
     }
 
+    // body-parser rejects oversized/malformed bodies with typed http-errors.
+    // Without this branch they fell through to the generic 500 handler —
+    // wrong status AND a stack trace logged per request (log-flood vector).
+    if (err instanceof Error && 'type' in err) {
+      const type = (err as Error & { type: string }).type;
+      if (type === 'entity.too.large') {
+        const body: ApiErrorBody = {
+          error: 'Request body exceeds the 256 KiB limit',
+          code: 'PAYLOAD_TOO_LARGE',
+          requestId,
+        };
+        res.status(413).json(body);
+        return;
+      }
+      if (type === 'encoding.unsupported') {
+        const body: ApiErrorBody = {
+          error: 'Unsupported content encoding',
+          code: 'UNSUPPORTED_MEDIA_TYPE',
+          requestId,
+        };
+        res.status(415).json(body);
+        return;
+      }
+      if (type === 'request.aborted' || type === 'request.size.invalid') {
+        const body: ApiErrorBody = {
+          error: 'Invalid request body',
+          code: 'INVALID_JSON',
+          requestId,
+        };
+        res.status(400).json(body);
+        return;
+      }
+    }
+
     logger.error('unhandled error', {
       requestId,
       method: req.method,

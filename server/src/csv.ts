@@ -6,7 +6,7 @@ import { ValidationError } from './errors.js';
 /**
  * CSV export/import — RFC 4180 with two security-minded deviations:
  *
- * 1. FORMULA INJECTION: a cell starting with = + - @ (or tab/CR) is
+ * 1. FORMULA INJECTION: a cell starting with = + - @ (or tab/CR/LF) is
  *    prefixed with a single quote so spreadsheet apps treat it as text,
  *    not a formula ("=HYPERLINK(...)" in a notes field is a classic
  *    phishing vector). To keep the transform REVERSIBLE, a leading
@@ -38,7 +38,7 @@ export const CSV_COLUMNS = [
   'archivedAt',
 ] as const;
 
-const FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r', "'"];
+const FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r', '\n', "'"];
 
 function escapeCell(value: string): string {
   let v = value;
@@ -136,6 +136,8 @@ export interface ImportedRow {
 }
 
 const MAX_IMPORT_ROWS = 1000;
+/** Maximum per-row issues echoed back in a 400; the rest are summarized. */
+const MAX_IMPORT_ERROR_DETAILS = 50;
 
 /**
  * Validates the WHOLE file and returns parsed rows, or throws a
@@ -207,6 +209,18 @@ export function parseImport(text: string): ImportedRow[] {
     out.push({ input: parsed.data, archived: archivedAt !== undefined });
   });
 
-  if (errors.length > 0) throw new ValidationError(errors);
+  if (errors.length > 0) {
+    // Cap the error payload: 1000 bad rows × several issues each would
+    // otherwise serialize into a huge 400 response (and log line) from a
+    // single cheap request — response amplification via malformed input.
+    const capped = errors.slice(0, MAX_IMPORT_ERROR_DETAILS);
+    if (errors.length > capped.length) {
+      capped.push({
+        path: 'csv',
+        message: `…and ${errors.length - capped.length} more issue(s); fix the first ${MAX_IMPORT_ERROR_DETAILS} and re-import`,
+      });
+    }
+    throw new ValidationError(capped);
+  }
   return out;
 }
