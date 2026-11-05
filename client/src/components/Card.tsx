@@ -28,7 +28,7 @@ export function Card({ app, dragging, onDragStart, onDragEnd, onClick }: CardPro
       }}
       tabIndex={0}
       role="button"
-      aria-label={`${app.position} at ${app.company}`}
+      aria-label={`${app.position} at ${app.company}, ${app.priority} priority`}
     >
       <div className="card-top">
         <span className="avatar" style={{ background: companyColor(app.company) }}>
@@ -41,8 +41,16 @@ export function Card({ app, dragging, onDragStart, onDragEnd, onClick }: CardPro
         <span className={`priority priority-${app.priority}`} title={`${app.priority} priority`} />
       </div>
       <div className="card-meta">
-        {app.location && <span>📍 {app.location}</span>}
-        {salary && <span>💰 {salary}</span>}
+        {app.location && (
+          <span>
+            <span aria-hidden="true">📍</span> {app.location}
+          </span>
+        )}
+        {salary && (
+          <span>
+            <span aria-hidden="true">💰</span> {salary}
+          </span>
+        )}
       </div>
       {app.followUpAt && (
         <div className={`follow-up follow-up-${reminderBucket(app.followUpAt)}`}>

@@ -1,4 +1,13 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import {
+  cloneElement,
+  isValidElement,
+  useId,
+  useState,
+  type FormEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
+import { useDialog } from '../hooks/useDialog';
 import { api, ApiError, type ApplicationInput } from '../api';
 import {
   PRIORITIES,
@@ -42,6 +51,9 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
   // The version this edit is based on; advances after "Load latest" so a
   // resubmit compares against the fresh row, not the stale opening snapshot.
   const [baseVersion, setBaseVersion] = useState(initial?.version);
+
+  // Focus trap + initial focus + Escape + focus return (ADR-0016).
+  const dialogRef = useDialog<HTMLDivElement>(onClose);
 
   const applyToFields = (a: Application) => {
     setCompany(a.company);
@@ -124,10 +136,12 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal"
         role="dialog"
         aria-modal="true"
         aria-label={initial ? 'Edit application' : 'New application'}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-header">
@@ -295,11 +309,29 @@ export function ApplicationForm({ initial, onSubmit, onClose }: ApplicationFormP
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
+  const id = useId();
+  const errorId = `${id}-error`;
+  // Link the error text to the control (aria-describedby) and flag it
+  // invalid, so a screen reader announces the problem on focus instead
+  // of leaving the user to hunt for the red text (ADR-0016).
+  const control = isValidElement(children)
+    ? cloneElement(
+        children as ReactElement<{ 'aria-invalid'?: boolean; 'aria-describedby'?: string }>,
+        {
+          'aria-invalid': error ? true : undefined,
+          'aria-describedby': error ? errorId : undefined,
+        },
+      )
+    : children;
   return (
     <label className={error ? 'field invalid' : 'field'}>
       <span className="field-label">{label}</span>
-      {children}
-      {error && <span className="field-error">{error}</span>}
+      {control}
+      {error && (
+        <span className="field-error" id={errorId}>
+          {error}
+        </span>
+      )}
     </label>
   );
 }

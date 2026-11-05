@@ -78,3 +78,21 @@ describe('App auth shell', () => {
     expect(await screen.findByRole('button', { name: /try demo/i })).toBeTruthy();
   });
 });
+
+describe('Tracker accessibility landmarks (ADR-0016)', () => {
+  it('provides a skip link, a single h1, and a focusable main landmark', async () => {
+    meMock.mockResolvedValue(user);
+    render(<App />);
+    await screen.findByText('Alice');
+
+    const skip = screen.getByRole('link', { name: /skip to main content/i });
+    expect(skip.getAttribute('href')).toBe('#main');
+
+    const h1 = screen.getByRole('heading', { level: 1 });
+    expect(h1.textContent).toMatch(/OfferFlow/);
+
+    const main = screen.getByRole('main');
+    expect(main.getAttribute('id')).toBe('main');
+    expect(main.getAttribute('tabindex')).toBe('-1');
+  });
+});

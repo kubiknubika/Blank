@@ -167,6 +167,10 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
 
   return (
     <div className="app">
+      <a className="skip-link" href="#main">
+        Skip to main content
+      </a>
+      <h1 className="sr-only">OfferFlow — job application tracker</h1>
       <header className="header">
         <div className="header-left">
           <div className="logo">
@@ -279,7 +283,7 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
         </div>
       </header>
 
-      <main className="main">
+      <main id="main" className="main" tabIndex={-1}>
         {error && (
           <div className="error-banner">
             {error}{' '}

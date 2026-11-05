@@ -18,6 +18,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 - **Activity timeline** — every status change is recorded automatically; log calls, emails, notes, and tasks per application
 - **Follow-up reminders** — a date per application with overdue/today/upcoming badges on cards and a grouped dashboard panel; bucketing follows your local timezone, rejections auto-clear the chase, and every schedule/clear is logged in the timeline
 - **Touch & keyboard friendly** — change status right in the detail drawer (HTML5 drag-and-drop doesn't exist on touch screens)
+- **Accessible** — keyboard- and screen-reader-friendly: dialogs trap and return focus (WAI-ARIA APG), errors announce assertively and are linked to their fields, skip link + landmarks + headings, visible focus rings, and `prefers-reduced-motion` support
 - **CSV export & import** — download everything (including the archive) as a spreadsheet-safe CSV; import is atomic with per-row error reporting and reverses the formula-injection escaping losslessly
 - **Archive** — soft-delete applications into a separate view; restore in one click; archived rows leave analytics and reminders but keep their full history
 - **Dark & light themes** — one-click toggle, persisted, follows the OS preference by default
@@ -36,7 +37,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 | Frontend | React 18, TypeScript (strict), Vite, hand-rolled SVG charts     |
 | Backend  | Node.js 22.13+, Express 5, Zod validation                       |
 | Database | SQLite via built-in `node:sqlite` (no native deps, WAL mode)    |
-| Testing  | Vitest, Supertest, Testing Library — 285 tests + Playwright E2E |
+| Testing  | Vitest, Supertest, Testing Library — 337 tests + Playwright E2E |
 | Tooling  | ESLint 9 (flat config), Prettier, npm workspaces                |
 | DevOps   | GitHub Actions CI, multi-stage Dockerfile, non-root container   |
 
@@ -170,6 +171,7 @@ npm test
 - **Migration & contention tests**: idempotency, baselining a legacy database, persistence across reopen, CHECK constraints; `busy_timeout` actually waits under a held lock, `BEGIN IMMEDIATE` holds the write lock from the start, and the WAL deferred-upgrade hazard is reproduced as a documented anti-test
 - **Config/logger tests**: fail-fast env validation, allowlist parsing, log levels, structured bindings
 - **Client tests**: salary/date formatting, relative time, avatar colors; optimistic-overlay merge rules; hook-level race regressions (stale refetch discarded, superseded move failure doesn't roll back newer state, in-flight refetch doesn't clobber a pending move); API-client paging; drawer load-race and no-refetch-on-rerender guarantees — two overlapping calls resolved out of order, not happy-path-only
+- **Accessibility tests**: the WAI-ARIA APG dialog pattern for both the detail drawer and the create/edit form (focus moves in, Tab/Shift+Tab trap, Escape closes, focus returns to the trigger), assertive `role="alert"` error toasts vs polite successes, field errors linked via `aria-describedby` + `aria-invalid`, the card's priority-inclusive accessible name, and the skip link / single `h1` / focusable `main` landmarks
 - **CSV & archive tests**: RFC 4180 quoting, formula-injection escaping + lossless round-trip, BOM/CRLF/embedded newlines, unterminated-quote rejection, per-row validation with row numbers, unknown-column and 1000-row caps, atomic import (one bad row writes nothing), export→import into a fresh account incl. archived rows; archive idempotency (no event/version churn), board/archive disjoint views, analytics/reminder exclusion, cross-user 404s
 - **Markdown & theme tests**: XSS-by-construction checks (script/img inert, javascript:/data: links defused), code-span literals, lists/paragraphs; theme persistence, OS-preference fallback, stored-choice priority
 - **Reminder tests**: schedule/reschedule/clear event semantics (same-date no-op), auto-clear on rejection with an explicit-patch override, soonest-first ordering, per-user isolation, date-format validation, partial-index migration; client bucketing pinned against a fixed local date (late-evening timezone edge, month boundaries) and dashboard panel grouping/degradation
@@ -238,6 +240,7 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 - **Adversarial robustness** ([ADR-0013](docs/adr/0013-adversarial-robustness.md)) — a permanent seeded fuzz suite pinning the "no hostile input → 5xx" invariant, a hard-capped rate-limiter bucket map, slowloris connection timeouts, and connection-aware graceful shutdown.
 - **Performance & property isolation** ([ADR-0014](docs/adr/0014-performance-and-property-isolation.md)) — a zero-dependency load benchmark with a committed [baseline](docs/performance.md) (throughput, latency percentiles, peak RSS) and property-based tests proving owner isolation holds under random operation interleavings.
 - **Durability & recoverability** ([ADR-0015](docs/adr/0015-durability-and-recoverability.md)) — a guarded restore script completing the backup/restore loop, crash-recovery tests proving acknowledged writes survive `SIGKILL`, an end-to-end restore drill, and CSV round-trip property tests.
+- **Accessibility** ([ADR-0016](docs/adr/0016-accessibility.md)) — a reusable dialog focus-management hook (focus in / trap / Escape / focus return) shared by both dialogs, severity-aware toast announcements, form errors linked to their controls, and global keyboard affordances (skip link, landmarks, `h1`, focus rings, reduced motion) — bringing the whole client up to the standard the auth screen already set.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
 - **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; the drawer's status select covers touch devices and keyboard users.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.

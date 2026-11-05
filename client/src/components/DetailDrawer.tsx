@@ -21,6 +21,7 @@ import {
 } from '../lib/format';
 import { followUpLabel, reminderBucket } from '../lib/reminders';
 import { Markdown } from '../lib/markdown';
+import { useDialog } from '../hooks/useDialog';
 
 interface DetailDrawerProps {
   appId: string;
@@ -113,13 +114,8 @@ export function DetailDrawer({
     void load();
   }, [load, appId, refreshKey]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+  // Focus trap + initial focus + Escape + focus return (ADR-0016).
+  const dialogRef = useDialog<HTMLElement>(onClose);
 
   const handleAddEvent = async (e: FormEvent) => {
     e.preventDefault();
@@ -168,10 +164,12 @@ export function DetailDrawer({
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <aside
+        ref={dialogRef}
         className="drawer"
         role="dialog"
         aria-modal="true"
         aria-label="Application details"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         {loading || !app ? (
