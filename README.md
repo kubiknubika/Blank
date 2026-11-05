@@ -27,7 +27,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 - **Demo mode** — one-click reset to a realistic seeded dataset (16 applications across European tech companies), scoped to the demo account only
 - **Zero-dependency charts** — SVG charts hand-built without chart libraries
 - **Production-ready** — Docker multi-stage build, GitHub Actions CI (audit gate + E2E job), health checks, strict TypeScript everywhere
-- **Operable** — per-IP rate limiting (`429` + `Retry-After`), Prometheus `/api/metrics`, liveness vs readiness probes with drain-aware shutdown, generated OpenAPI 3.1 contract, online SQLite backups (`npm run backup`)
+- **Operable** — per-IP rate limiting (`429` + `Retry-After`), Prometheus `/api/metrics`, liveness vs readiness probes with drain-aware shutdown, generated OpenAPI 3.1 contract, online SQLite backups (`npm run backup`), and a reproducible load benchmark with a documented [performance baseline](docs/performance.md) (`npm run bench`)
 
 ## Tech stack
 
@@ -102,17 +102,18 @@ docker run -p 3000:3000 -v offerflow-data:/data offerflow
 
 ## Scripts
 
-| Command             | Description                                      |
-| ------------------- | ------------------------------------------------ |
-| `npm run dev`       | Run API + client in watch mode                   |
-| `npm test`          | Run all test suites (server + client)            |
-| `npm run lint`      | ESLint across the monorepo                       |
-| `npm run typecheck` | Strict TypeScript checks                         |
-| `npm run build`     | Production build (client + server)               |
-| `npm start`         | Serve production build                           |
-| `npm run backup`    | Online SQLite snapshot (`VACUUM INTO`, verified) |
-| `npm run test:e2e`  | Playwright E2E against the production build      |
-| `npm run format`    | Prettier                                         |
+| Command             | Description                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `npm run dev`       | Run API + client in watch mode                                                       |
+| `npm test`          | Run all test suites (server + client)                                                |
+| `npm run lint`      | ESLint across the monorepo                                                           |
+| `npm run typecheck` | Strict TypeScript checks                                                             |
+| `npm run build`     | Production build (client + server)                                                   |
+| `npm start`         | Serve production build                                                               |
+| `npm run backup`    | Online SQLite snapshot (`VACUUM INTO`, verified)                                     |
+| `npm run test:e2e`  | Playwright E2E against the production build                                          |
+| `npm run bench`     | Load benchmark → throughput, p50/p95/p99, peak RSS ([baseline](docs/performance.md)) |
+| `npm run format`    | Prettier                                                                             |
 
 ## API reference
 
@@ -173,6 +174,7 @@ npm test
 - **Reminder tests**: schedule/reschedule/clear event semantics (same-date no-op), auto-clear on rejection with an explicit-patch override, soonest-first ordering, per-user isolation, date-format validation, partial-index migration; client bucketing pinned against a fixed local date (late-evening timezone edge, month boundaries) and dashboard panel grouping/degradation
 - **Auth & isolation tests**: scrypt hash format + verification, cookie flags (`HttpOnly`, `SameSite=Lax`, `Secure` on HTTPS), duplicate email `409`, uniform `401` (unknown email vs wrong password), token-hash-at-rest, expiry + opportunistic sweep, credential rate budget, session replay after logout; two-user isolation at HTTP/service/SQL levels — list/get/patch/delete/events/search/analytics never cross the boundary, foreign ids answer `404` not `403`, demo reset touches only the demo account
 - **Adversarial fuzz tests**: a seeded, deterministic fuzzer drives 332 hostile requests per run through the real stack — random/malformed JSON, weaponized CSV, absurd query strings, traversal/SQL path ids, invalid registrations — and asserts the invariant that no input ever yields a `5xx` and every `4xx` is a structured error; the CSV codec must throw only `ValidationError`. A future unmapped throw fails CI on the push that introduces it, with the seed and iteration to reproduce.
+- **Property-based isolation tests**: 300 randomized operations across four users (get/patch/delete/event/archive/restore/list/search/analytics/reminders/export) assert the security invariant under arbitrary interleavings — no response ever contains another user's data, foreign ids always read `404`, and each user's final board equals exactly their own surviving rows. Seeded and reproducible; complements the deterministic isolation suite.
 - **Hardening tests**: oversized body → `413` with no error log, unsupported encoding → `415`, verifier throw-paths fail closed, session eviction at the cap, event pruning at rest, quota enforcement on create and atomic import rejection, import error-detail cap, LF formula guard, CSP/HSTS/Permissions-Policy presence and conditionality, `__Host-` cookie issuance/tossing resistance/dual-name logout clear
 - **Operations tests**: rate-limit matrix (mutation and read budgets, window reset, per-IP buckets behind a trusted proxy, spoofed-header resistance, 429-before-parse, probe exemption); readiness draining/unavailable; Prometheus cardinality guarantees (route patterns, no ids, single unmatched series); OpenAPI drift (router walk + live-response key comparison); backup script subprocess tests (WAL snapshot consistency, live-write point-in-time cut, overwrite refusal, integrity verification)
 - **E2E tests** (Playwright, separate CI job): sixteen golden paths against the production build served by Express — auth flows (anonymous → sign-in screen, demo entry, register → private board → reload persistence, sign-out/sign-in round-trip, two-account isolation, inline wrong-password error) plus tracker paths (create → drawer move → search → dashboard, edit persistence, server-side validation round-trip, delete + reset dialogs, the follow-up lifecycle (schedule → badge → dashboard panel → rejection clears it), archive → restore, CSV export → fresh-account import, theme persistence across reload, and markdown rendering in the drawer
@@ -231,6 +233,7 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 - **Security audit & hardening** ([ADR-0011](docs/adr/0011-security-audit.md)) — http(s)-only posting URLs (stored-XSS fix at schema, render and CSV-import layers), OWASP-baseline scrypt (N=2^17) with fail-closed hash verification, advisory-clean dependency tree including dev, plus live-probed SQLi/CSRF/traversal/isolation defenses.
 - **Second-pass hardening** ([ADR-0012](docs/adr/0012-second-pass-hardening.md)) — resource-exhaustion ceilings (sessions, events, per-account quota, read budget, error-detail cap), correct `413`/`415` body-parser mapping, CSP/HSTS/Permissions-Policy, `__Host-` cookies on HTTPS, and SHA-pinned least-privilege CI.
 - **Adversarial robustness** ([ADR-0013](docs/adr/0013-adversarial-robustness.md)) — a permanent seeded fuzz suite pinning the "no hostile input → 5xx" invariant, a hard-capped rate-limiter bucket map, slowloris connection timeouts, and connection-aware graceful shutdown.
+- **Performance & property isolation** ([ADR-0014](docs/adr/0014-performance-and-property-isolation.md)) — a zero-dependency load benchmark with a committed [baseline](docs/performance.md) (throughput, latency percentiles, peak RSS) and property-based tests proving owner isolation holds under random operation interleavings.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
 - **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; the drawer's status select covers touch devices and keyboard users.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.

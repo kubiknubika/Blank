@@ -19,6 +19,7 @@
     "backup": "node server/scripts/backup.mjs",
     "test": "npm run build -w shared && npm run test -w server && npm run test -w client",
     "test:e2e": "playwright test",
+    "bench": "node scripts/benchmark.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

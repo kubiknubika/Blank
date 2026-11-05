@@ -31,7 +31,12 @@ export default tseslint.config(
   {
     // Node-context tooling outside the server workspace: Playwright config,
     // E2E specs and operational scripts.
-    files: ['playwright.config.ts', 'tests/e2e/**/*.ts', 'server/scripts/**/*.mjs'],
+    files: [
+      'playwright.config.ts',
+      'tests/e2e/**/*.ts',
+      'server/scripts/**/*.mjs',
+      'scripts/**/*.mjs',
+    ],
     languageOptions: {
       globals: globals.node,
     },
