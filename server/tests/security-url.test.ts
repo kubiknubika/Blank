@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import request from 'supertest';
 import { createApplicationSchema, updateApplicationSchema } from '@offerflow/shared/schemas';
 import { makeTestApp } from './helpers.js';
 
