@@ -1,0 +1,46 @@
+{
+  "name": "offerflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Job application tracker with a kanban pipeline and analytics \u2014 React + Express + SQLite",
+  "license": "MIT",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "npm run build -w shared && concurrently -n shared,server,client -c yellow,blue,magenta \"npm run dev -w shared\" \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w shared && npm run build -w client && npm run build -w server",
+    "start": "npm run start -w server",
+    "backup": "node server/scripts/backup.mjs",
+    "restore": "node server/scripts/restore.mjs",
+    "test": "npm run build -w shared && npm run test -w server && npm run test -w client",
+    "test:e2e": "playwright test",
+    "bench": "node scripts/benchmark.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "npm run build -w shared && npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.64.1",
+    "concurrently": "^9.1.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.4"
+    }
+  }
+}
