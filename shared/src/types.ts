@@ -33,6 +33,7 @@ export const EVENT_TYPES = [
   'created',
   'status',
   'reminder',
+  'archive',
   'note',
   'call',
   'email',
@@ -61,6 +62,8 @@ export interface Application {
   appliedAt: string | null;
   /** Date-only (YYYY-MM-DD) reminder: "follow up on this application". */
   followUpAt: string | null;
+  /** ISO timestamp when archived; null = on the active board. */
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
   /** Monotonic row version for optimistic concurrency (ETag / If-Match). */
@@ -123,4 +126,9 @@ export interface ApiErrorBody {
   code: ErrorCode;
   requestId?: string;
   details?: { path: string; message: string }[];
+}
+
+/** Result of a CSV import: atomic — either every row landed or none did. */
+export interface ImportResult {
+  imported: number;
 }

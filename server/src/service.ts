@@ -9,6 +9,7 @@ import type {
 import { transaction } from './db.js';
 import { NotFoundError, PreconditionFailedError } from './errors.js';
 import { ApplicationRepository } from './repository.js';
+import { parseImport, toCsv } from './csv.js';
 
 /**
  * Business rules live here, between HTTP and SQL:
@@ -17,6 +18,8 @@ import { ApplicationRepository } from './repository.js';
  *  - moving to `applied` stamps appliedAt if the caller didn't provide one
  *  - scheduling/clearing a follow-up records a `reminder` event
  *  - moving to `rejected` clears a pending follow-up (nothing to chase)
+ *  - archive/restore are idempotent and record `archive` events
+ *  - CSV import is all-or-nothing: validate every row, then write once
  *  - reads compose application + events into one aggregate
  *
  * Multi-user: every data operation goes through forUser(userId), which
@@ -42,6 +45,10 @@ export interface UserScope {
   addEvent(id: string, input: CreateEventInput): AppEvent;
   count(): number;
   resetDemo(seed: (scope: UserScope) => void): number;
+  archive(id: string): ApplicationWithEvents;
+  restore(id: string): ApplicationWithEvents;
+  exportCsv(): string;
+  importCsv(csv: string): { imported: number };
 }
 
 export class ApplicationService {
@@ -180,6 +187,49 @@ export class ApplicationService {
           repo.deleteAllForUser(userId);
           seed(scope);
           return repo.countForUser(userId);
+        });
+      },
+
+      /** Idempotent: archiving an archived row changes nothing (no event, no version bump). */
+      archive(id) {
+        return transaction(db, () => {
+          const existing = repo.getById(userId, id);
+          if (!existing) throw new NotFoundError();
+          if (existing.archivedAt === null) {
+            const ts = now().toISOString();
+            repo.setArchived(userId, id, ts, ts);
+            repo.insertEvent(id, 'archive', 'Application archived', ts);
+          }
+          return scope.get(id);
+        });
+      },
+
+      restore(id) {
+        return transaction(db, () => {
+          const existing = repo.getById(userId, id);
+          if (!existing) throw new NotFoundError();
+          if (existing.archivedAt !== null) {
+            const ts = now().toISOString();
+            repo.setArchived(userId, id, null, ts);
+            repo.insertEvent(id, 'archive', 'Application restored', ts);
+          }
+          return scope.get(id);
+        });
+      },
+
+      exportCsv() {
+        return toCsv(repo.listAllForExport(userId));
+      },
+
+      importCsv(csv) {
+        // Parse + validate the WHOLE file first — a rejection writes nothing.
+        const rows = parseImport(csv);
+        return transaction(db, () => {
+          for (const row of rows) {
+            const created = scope.create(row.input);
+            if (row.archived) scope.archive(created.id);
+          }
+          return { imported: rows.length };
         });
       },
     };

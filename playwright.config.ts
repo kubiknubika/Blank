@@ -19,6 +19,9 @@ export default defineConfig({
   globalSetup: './tests/e2e/global-setup.ts',
   use: {
     baseURL: 'http://127.0.0.1:3100',
+    // The app's default design is dark; pin the OS preference so the
+    // theme test doesn't depend on Playwright's default (light).
+    colorScheme: 'dark',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

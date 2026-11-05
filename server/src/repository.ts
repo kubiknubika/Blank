@@ -25,6 +25,7 @@ interface ApplicationRow {
   notes: string | null;
   applied_at: string | null;
   follow_up_at: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
   version: number;
@@ -55,6 +56,7 @@ function toApplication(row: ApplicationRow): Application {
     notes: row.notes,
     appliedAt: row.applied_at,
     followUpAt: row.follow_up_at,
+    archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     version: row.version,
@@ -100,6 +102,8 @@ function escapeLike(value: string): string {
 export interface ListFilter {
   status?: Status;
   q?: string;
+  /** 'true' = archived rows only; default = active board. */
+  archived?: 'true' | 'false';
   limit?: number;
   offset?: number;
 }
@@ -116,6 +120,8 @@ export class ApplicationRepository {
     // scoped to one user, by construction rather than by caller discipline.
     const clauses: string[] = ['user_id = ?'];
     const params: (string | number)[] = [userId];
+    // The board and the archive are disjoint views of the same table.
+    clauses.push(filter.archived === 'true' ? 'archived_at IS NOT NULL' : 'archived_at IS NULL');
     if (filter.status) {
       clauses.push('status = ?');
       params.push(filter.status);
@@ -253,11 +259,32 @@ export class ApplicationRepository {
     const rows = this.db
       .prepare(
         `SELECT * FROM applications
-         WHERE user_id = ? AND follow_up_at IS NOT NULL
+         WHERE user_id = ? AND follow_up_at IS NOT NULL AND archived_at IS NULL
          ORDER BY follow_up_at ASC, created_at ASC`,
       )
       .all(userId) as unknown as ApplicationRow[];
     return rows.map(toApplication);
+  }
+
+  /**
+   * Every row the user owns, active AND archived — the CSV export is a
+   * full backup, so it must not silently drop the archive.
+   */
+  listAllForExport(userId: string): Application[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM applications WHERE user_id = ? ORDER BY created_at ASC, rowid ASC`)
+      .all(userId) as unknown as ApplicationRow[];
+    return rows.map(toApplication);
+  }
+
+  setArchived(userId: string, id: string, archivedAt: string | null, now: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE applications SET archived_at = ?, updated_at = ?, version = version + 1
+         WHERE id = ? AND user_id = ?`,
+      )
+      .run(archivedAt, now, id, userId);
+    return result.changes > 0;
   }
 
   /** Global count — liveness/metrics only, never user-facing data. */

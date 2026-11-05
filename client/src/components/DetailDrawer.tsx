@@ -20,12 +20,14 @@ import {
   relativeDays,
 } from '../lib/format';
 import { followUpLabel, reminderBucket } from '../lib/reminders';
+import { Markdown } from '../lib/markdown';
 
 interface DetailDrawerProps {
   appId: string;
   onClose: () => void;
   onEdit: (app: Application) => void;
   onDelete: (id: string) => Promise<void>;
+  onArchiveToggle?: (app: Application) => Promise<void>;
   onChanged: () => void;
   onError: (message: string) => void;
   /** Bumped by the parent on any data change; triggers an in-place reload. */
@@ -36,6 +38,7 @@ const EVENT_ICONS: Record<EventType, string> = {
   created: '✨',
   status: '🔀',
   reminder: '🔔',
+  archive: '📂',
   note: '📝',
   call: '📞',
   email: '✉️',
@@ -47,6 +50,7 @@ export function DetailDrawer({
   onClose,
   onEdit,
   onDelete,
+  onArchiveToggle,
   onChanged,
   onError,
   refreshKey = 0,
@@ -249,7 +253,7 @@ export function DetailDrawer({
               {app.notes && (
                 <section className="notes-block">
                   <h3>Notes</h3>
-                  <p>{app.notes}</p>
+                  <Markdown text={app.notes} />
                 </section>
               )}
 
@@ -300,6 +304,11 @@ export function DetailDrawer({
               <button className="btn danger ghost" onClick={handleDelete}>
                 Delete
               </button>
+              {onArchiveToggle && (
+                <button className="btn ghost" onClick={() => void onArchiveToggle(app)}>
+                  {app.archivedAt ? 'Restore' : 'Archive'}
+                </button>
+              )}
               <button className="btn primary" onClick={() => onEdit(app)}>
                 Edit
               </button>

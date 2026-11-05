@@ -89,11 +89,18 @@ export const api = {
 
   // --- data -----------------------------------------------------------
   listApplications: (
-    params: { status?: Status; q?: string; limit?: number; offset?: number } = {},
+    params: {
+      status?: Status;
+      q?: string;
+      archived?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
   ) => {
     const search = new URLSearchParams();
     if (params.status) search.set('status', params.status);
     if (params.q) search.set('q', params.q);
+    if (params.archived) search.set('archived', 'true');
     if (params.limit !== undefined) search.set('limit', String(params.limit));
     if (params.offset !== undefined) search.set('offset', String(params.offset));
     const qs = search.toString();
@@ -106,7 +113,7 @@ export const api = {
    * tracker grows past the default. The page cap bounds worst-case work.
    */
   listAllApplications: async (
-    params: { status?: Status; q?: string } = {},
+    params: { status?: Status; q?: string; archived?: boolean } = {},
   ): Promise<Application[]> => {
     const PAGE = 500;
     const MAX_PAGES = 20; // 10k applications is far beyond personal use
@@ -115,6 +122,7 @@ export const api = {
       const search = new URLSearchParams();
       if (params.status) search.set('status', params.status);
       if (params.q) search.set('q', params.q);
+      if (params.archived) search.set('archived', 'true');
       search.set('limit', String(PAGE));
       search.set('offset', String(page * PAGE));
       const res = await requestRaw(`/applications?${search.toString()}`);
@@ -146,6 +154,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ type, message }),
     }),
+  archiveApplication: (id: string) =>
+    request<ApplicationWithEvents>(`/applications/${id}/archive`, { method: 'POST' }),
+  restoreApplication: (id: string) =>
+    request<ApplicationWithEvents>(`/applications/${id}/restore`, { method: 'POST' }),
+  importCsv: (csv: string) =>
+    request<{ imported: number }>('/import/csv', {
+      method: 'POST',
+      body: JSON.stringify({ csv }),
+    }),
+  /** Downloads the CSV as a blob (session cookie rides along). */
+  exportCsv: async (): Promise<Blob> => {
+    const res = await requestRaw('/export/csv');
+    return res.blob();
+  },
   overview: () => request<AnalyticsOverview>('/analytics/overview'),
   reminders: () => request<Application[]>('/reminders'),
   resetDemo: () =>

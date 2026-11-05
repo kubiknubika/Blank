@@ -30,7 +30,8 @@ const SEED: SeedItem[] = [
     salaryMax: 105000,
     daysAgoApplied: 21,
     followUpInDays: 0, // today: prep the interview
-    notes: 'Tech interview scheduled. Prepare system design: news feed.',
+    notes:
+      '**Tech interview scheduled**\n\n- prepare system design: news feed\n- review `STAR` stories\n- [prep doc](https://example.com/interview-prep)',
   },
   {
     company: 'Zalando',

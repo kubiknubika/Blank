@@ -5,6 +5,8 @@ import { STATUS_META, type Application, type Status } from '../types';
 
 export interface UseApplicationsOptions {
   notify: (message: string, kind: 'success' | 'error') => void;
+  /** true = the archive view; the same race guards apply to both. */
+  archived?: boolean;
 }
 
 /**
@@ -22,7 +24,7 @@ export interface UseApplicationsOptions {
  *    in-flight refetch must not clobber a pending optimistic status
  *    (CupThread/CupThreadReactNativeSDK#75).
  */
-export function useApplications({ notify }: UseApplicationsOptions) {
+export function useApplications({ notify, archived = false }: UseApplicationsOptions) {
   const [apps, setApps] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +44,7 @@ export function useApplications({ notify }: UseApplicationsOptions) {
   const refresh = useCallback(async () => {
     const seq = ++fetchSeq.current;
     try {
-      const data = await api.listAllApplications();
+      const data = await api.listAllApplications({ archived });
       if (seq !== fetchSeq.current) return; // a newer refresh was dispatched
       setApps(overlayPendingStatuses(data, pendingStatuses.current));
       setError(null);
@@ -52,7 +54,7 @@ export function useApplications({ notify }: UseApplicationsOptions) {
     } finally {
       if (seq === fetchSeq.current) setLoading(false);
     }
-  }, []);
+  }, [archived]);
 
   useEffect(() => {
     void refresh();

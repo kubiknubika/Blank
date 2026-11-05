@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
-import { api, type ApplicationInput } from '../api';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { api, ApiError, type ApplicationInput } from '../api';
 import { useApplications } from '../hooks/useApplications';
+import { useTheme } from '../hooks/useTheme';
 import type { Application, AuthUser } from '../types';
 import { Board } from './Board';
 import { Dashboard } from './Dashboard';
@@ -20,7 +21,10 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Application | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const { theme, toggle: toggleTheme } = useTheme();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'success') => {
     const id = Date.now() + Math.random();
@@ -30,6 +34,7 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
 
   const { apps, loading, error, dataVersion, refresh, bumpVersion, moveApp } = useApplications({
     notify: pushToast,
+    archived: showArchived,
   });
 
   const filtered = useMemo(() => {
@@ -83,6 +88,63 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
       pushToast('Failed to reset demo data', 'error');
     }
   }, [pushToast, bumpVersion]);
+
+  const handleExport = useCallback(async () => {
+    try {
+      const blob = await api.exportCsv();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `offerflow-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      pushToast('CSV exported');
+    } catch {
+      pushToast('Export failed', 'error');
+    }
+  }, [pushToast]);
+
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      try {
+        const csv = await file.text();
+        const { imported } = await api.importCsv(csv);
+        pushToast(`Imported ${imported} application${imported === 1 ? '' : 's'}`);
+        bumpVersion();
+      } catch (err) {
+        if (err instanceof ApiError && err.details?.length) {
+          // Show the first few row errors — the full list is in the response.
+          const summary = err.details
+            .slice(0, 3)
+            .map((d) => `${d.path}: ${d.message}`)
+            .join('; ');
+          pushToast(`Import rejected — ${summary}${err.details.length > 3 ? '…' : ''}`, 'error');
+        } else {
+          pushToast(err instanceof Error ? err.message : 'Import failed', 'error');
+        }
+      }
+    },
+    [pushToast, bumpVersion],
+  );
+
+  const handleArchiveToggle = useCallback(
+    async (app: Application) => {
+      try {
+        if (app.archivedAt) {
+          await api.restoreApplication(app.id);
+          pushToast('Application restored');
+        } else {
+          await api.archiveApplication(app.id);
+          pushToast('Application archived');
+        }
+        setSelectedId(null);
+        bumpVersion();
+      } catch {
+        pushToast('Archive action failed', 'error');
+      }
+    },
+    [pushToast, bumpVersion],
+  );
 
   const openCreate = useCallback(() => {
     setEditing(null);
@@ -143,6 +205,46 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
               aria-label="Search applications"
             />
           )}
+          {view === 'board' && (
+            <button
+              className={showArchived ? 'btn ghost active-toggle' : 'btn ghost'}
+              onClick={() => setShowArchived((v) => !v)}
+              aria-pressed={showArchived}
+              title={showArchived ? 'Back to the active board' : 'View archived applications'}
+            >
+              {showArchived ? '📂 Archive' : '📂 Archive'}
+            </button>
+          )}
+          <button
+            className="btn ghost"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            title="Toggle theme"
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button className="btn ghost" onClick={handleExport} title="Download all data as CSV">
+            ⬇ CSV
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => fileInputRef.current?.click()}
+            title="Import applications from CSV"
+          >
+            ⬆ CSV
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            hidden
+            aria-label="Import CSV file"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleImportFile(file);
+              e.target.value = ''; // allow re-importing the same file
+            }}
+          />
           {user.isDemo && (
             <button
               className="btn ghost"
@@ -204,6 +306,7 @@ export function Tracker({ user, onLogout }: { user: AuthUser; onLogout: () => vo
           onClose={() => setSelectedId(null)}
           onEdit={openEdit}
           onDelete={handleDelete}
+          onArchiveToggle={handleArchiveToggle}
           onChanged={bumpVersion}
           onError={(msg) => pushToast(msg, 'error')}
         />

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   createApplicationSchema,
   createEventSchema,
+  importCsvSchema,
   loginSchema,
   registerSchema,
   updateApplicationSchema,
@@ -79,6 +80,7 @@ const applicationFields = {
   notes: nullable(str),
   appliedAt: nullable({ ...str, format: 'date' }),
   followUpAt: nullable({ ...str, format: 'date' }),
+  archivedAt: nullable({ ...str, format: 'date-time' }),
   createdAt: { ...str, format: 'date-time' },
   updatedAt: { ...str, format: 'date-time' },
   version: { ...int, minimum: 1, description: 'Monotonic row version; mirrors the ETag.' },
@@ -322,6 +324,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
               schema: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
             },
             { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 } },
+            {
+              name: 'archived',
+              in: 'query',
+              schema: { type: 'string', enum: ['true', 'false'], default: 'false' },
+              description: "'true' lists the archive; default lists the active board.",
+            },
           ],
           responses: {
             200: {
@@ -458,6 +466,100 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           },
         },
       },
+      '/api/applications/{id}/archive': {
+        post: {
+          tags: ['applications'],
+          summary: 'Archive an application (idempotent; keeps history).',
+          security: [{ cookieAuth: [] }],
+          parameters: [idParam],
+          responses: {
+            200: {
+              description: 'Archived (or already archived).',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/ApplicationWithEvents' },
+                },
+              },
+            },
+            401: unauthorizedResponse,
+            404: errorResponse('No such application (or it belongs to another user).'),
+            429: rateLimitedResponse,
+          },
+        },
+      },
+      '/api/applications/{id}/restore': {
+        post: {
+          tags: ['applications'],
+          summary: 'Restore an archived application to the active board (idempotent).',
+          security: [{ cookieAuth: [] }],
+          parameters: [idParam],
+          responses: {
+            200: {
+              description: 'Restored (or already active).',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/ApplicationWithEvents' },
+                },
+              },
+            },
+            401: unauthorizedResponse,
+            404: errorResponse('No such application (or it belongs to another user).'),
+            429: rateLimitedResponse,
+          },
+        },
+      },
+      '/api/export/csv': {
+        get: {
+          tags: ['operations'],
+          summary: 'Download every application (active + archived) as CSV.',
+          description:
+            'RFC 4180; cells starting with = + - @ are quote-prefixed against spreadsheet ' +
+            'formula injection (import reverses this). Header uses camelCase API field names.',
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: {
+              description: 'CSV file download.',
+              headers: {
+                'Content-Disposition': {
+                  schema: str,
+                  description: 'attachment; filename="offerflow-YYYY-MM-DD.csv"',
+                },
+              },
+              content: { 'text/csv': { schema: str } },
+            },
+            401: unauthorizedResponse,
+          },
+        },
+      },
+      '/api/import/csv': {
+        post: {
+          tags: ['operations'],
+          summary: 'Import applications from CSV (atomic: all rows or none).',
+          description:
+            'The file travels as JSON ({ csv }) so the JSON-only CSRF defense applies. ' +
+            'Every row is validated before anything is written; errors list each bad row. ' +
+            'Maximum 1000 rows per file.',
+          security: [{ cookieAuth: [] }],
+          requestBody: jsonBody('ImportCsvInput'),
+          responses: {
+            201: {
+              description: 'Imported.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { imported: int },
+                    required: ['imported'],
+                  },
+                },
+              },
+            },
+            400: errorResponse('Validation failed (per-row details in details[]).'),
+            401: unauthorizedResponse,
+            429: rateLimitedResponse,
+          },
+        },
+      },
       '/api/reminders': {
         get: {
           tags: ['applications'],
@@ -556,6 +658,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           properties: authUserFields,
           required: Object.keys(authUserFields),
         },
+        ImportCsvInput: inputSchema(importCsvSchema),
         RegisterInput: inputSchema(registerSchema),
         LoginInput: inputSchema(loginSchema),
         CreateApplicationInput: inputSchema(createApplicationSchema),

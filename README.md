@@ -18,6 +18,10 @@ Job hunting produces dozens of applications across different stages, sources, an
 - **Activity timeline** — every status change is recorded automatically; log calls, emails, notes, and tasks per application
 - **Follow-up reminders** — a date per application with overdue/today/upcoming badges on cards and a grouped dashboard panel; bucketing follows your local timezone, rejections auto-clear the chase, and every schedule/clear is logged in the timeline
 - **Touch & keyboard friendly** — change status right in the detail drawer (HTML5 drag-and-drop doesn't exist on touch screens)
+- **CSV export & import** — download everything (including the archive) as a spreadsheet-safe CSV; import is atomic with per-row error reporting and reverses the formula-injection escaping losslessly
+- **Archive** — soft-delete applications into a separate view; restore in one click; archived rows leave analytics and reminders but keep their full history
+- **Dark & light themes** — one-click toggle, persisted, follows the OS preference by default
+- **Markdown notes** — bold/italic/code/links/lists rendered safely (React elements, never raw HTML; http(s)-only links)
 - **Full CRUD** — create/edit forms with client- and server-side validation, search by company/role/location; concurrent edits are conflict-checked (`412` + "Load latest", never a silent overwrite)
 - **Accounts & isolation** — email/password registration, scrypt hashing, HttpOnly session cookies, per-user data isolation (another user's ids read as `404`); shared one-click demo account for zero-friction review
 - **Demo mode** — one-click reset to a realistic seeded dataset (16 applications across European tech companies), scoped to the demo account only
@@ -32,7 +36,7 @@ Job hunting produces dozens of applications across different stages, sources, an
 | Frontend | React 18, TypeScript (strict), Vite, hand-rolled SVG charts     |
 | Backend  | Node.js 22.13+, Express 5, Zod validation                       |
 | Database | SQLite via built-in `node:sqlite` (no native deps, WAL mode)    |
-| Testing  | Vitest, Supertest, Testing Library — 224 tests + Playwright E2E |
+| Testing  | Vitest, Supertest, Testing Library — 262 tests + Playwright E2E |
 | Tooling  | ESLint 9 (flat config), Prettier, npm workspaces                |
 | DevOps   | GitHub Actions CI, multi-stage Dockerfile, non-root container   |
 
@@ -112,26 +116,26 @@ docker run -p 3000:3000 -v offerflow-data:/data offerflow
 
 ## API reference
 
-| Method   | Endpoint                       | Description                                                                            |
-| -------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `POST`   | `/api/auth/register`           | Create an account; sets an HttpOnly session cookie                                     |
-| `POST`   | `/api/auth/login`              | Sign in (uniform `401` for unknown email / wrong password)                             |
-| `POST`   | `/api/auth/demo`               | Sign into the shared public demo account — no credentials                              |
-| `POST`   | `/api/auth/logout`             | Revoke the session (idempotent)                                                        |
-| `GET`    | `/api/auth/me`                 | Current user (`401` when signed out)                                                   |
-| `GET`    | `/api/health`                  | Liveness probe + application count                                                     |
-| `GET`    | `/api/ready`                   | Readiness probe — `503` while draining or if the DB is unavailable                     |
-| `GET`    | `/api/metrics`                 | Prometheus metrics (route-pattern labels, request histogram)                           |
-| `GET`    | `/api/openapi.json`            | OpenAPI 3.1 contract, generated from the live zod schemas                              |
-| `GET`    | `/api/applications`            | List; `?status=`, `?q=`, `?limit=`, `?offset=`; `X-Total-Count` header                 |
-| `POST`   | `/api/applications`            | Create (Zod-validated)                                                                 |
-| `GET`    | `/api/applications/:id`        | Details with full event timeline                                                       |
-| `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes; optional `If-Match` → `412` on stale version |
-| `DELETE` | `/api/applications/:id`        | Delete (cascades events)                                                               |
-| `POST`   | `/api/applications/:id/events` | Log a note / call / email / task                                                       |
-| `GET`    | `/api/analytics/overview`      | Aggregated metrics for the dashboard                                                   |
-| `GET`    | `/api/reminders`               | Applications with a follow-up date, soonest first                                      |
-| `POST`   | `/api/demo/reset`              | Restore the demo dataset (demo account only)                                           |
+| Method   | Endpoint                       | Description                                                                              |
+| -------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `POST`   | `/api/auth/register`           | Create an account; sets an HttpOnly session cookie                                       |
+| `POST`   | `/api/auth/login`              | Sign in (uniform `401` for unknown email / wrong password)                               |
+| `POST`   | `/api/auth/demo`               | Sign into the shared public demo account — no credentials                                |
+| `POST`   | `/api/auth/logout`             | Revoke the session (idempotent)                                                          |
+| `GET`    | `/api/auth/me`                 | Current user (`401` when signed out)                                                     |
+| `GET`    | `/api/health`                  | Liveness probe + application count                                                       |
+| `GET`    | `/api/ready`                   | Readiness probe — `503` while draining or if the DB is unavailable                       |
+| `GET`    | `/api/metrics`                 | Prometheus metrics (route-pattern labels, request histogram)                             |
+| `GET`    | `/api/openapi.json`            | OpenAPI 3.1 contract, generated from the live zod schemas                                |
+| `GET`    | `/api/applications`            | List; `?status=`, `?q=`, `?archived=true`, `?limit=`, `?offset=`; `X-Total-Count` header |
+| `POST`   | `/api/applications`            | Create (Zod-validated)                                                                   |
+| `GET`    | `/api/applications/:id`        | Details with full event timeline                                                         |
+| `PATCH`  | `/api/applications/:id`        | Partial update; auto-logs status changes; optional `If-Match` → `412` on stale version   |
+| `DELETE` | `/api/applications/:id`        | Delete (cascades events)                                                                 |
+| `POST`   | `/api/applications/:id/events` | Log a note / call / email / task                                                         |
+| `GET`    | `/api/analytics/overview`      | Aggregated metrics for the dashboard                                                     |
+| `GET`    | `/api/reminders`               | Applications with a follow-up date, soonest first                                        |
+| `POST`   | `/api/demo/reset`              | Restore the demo dataset (demo account only)                                             |
 
 All data endpoints require the `offerflow_session` cookie and are scoped to the signed-in user; without a session they return `401 UNAUTHORIZED`. Validation errors return `400` with a structured `details` array (`{ path, message }`) that the UI maps onto form fields. Mutations are rate-limited per IP (default 120/min, `RATE_LIMIT_MAX=0` disables): exceeding the budget returns `429` with `Retry-After` and a `RATE_LIMITED` error code.
 
@@ -162,10 +166,12 @@ npm test
 - **Migration & contention tests**: idempotency, baselining a legacy database, persistence across reopen, CHECK constraints; `busy_timeout` actually waits under a held lock, `BEGIN IMMEDIATE` holds the write lock from the start, and the WAL deferred-upgrade hazard is reproduced as a documented anti-test
 - **Config/logger tests**: fail-fast env validation, allowlist parsing, log levels, structured bindings
 - **Client tests**: salary/date formatting, relative time, avatar colors; optimistic-overlay merge rules; hook-level race regressions (stale refetch discarded, superseded move failure doesn't roll back newer state, in-flight refetch doesn't clobber a pending move); API-client paging; drawer load-race and no-refetch-on-rerender guarantees — two overlapping calls resolved out of order, not happy-path-only
+- **CSV & archive tests**: RFC 4180 quoting, formula-injection escaping + lossless round-trip, BOM/CRLF/embedded newlines, unterminated-quote rejection, per-row validation with row numbers, unknown-column and 1000-row caps, atomic import (one bad row writes nothing), export→import into a fresh account incl. archived rows; archive idempotency (no event/version churn), board/archive disjoint views, analytics/reminder exclusion, cross-user 404s
+- **Markdown & theme tests**: XSS-by-construction checks (script/img inert, javascript:/data: links defused), code-span literals, lists/paragraphs; theme persistence, OS-preference fallback, stored-choice priority
 - **Reminder tests**: schedule/reschedule/clear event semantics (same-date no-op), auto-clear on rejection with an explicit-patch override, soonest-first ordering, per-user isolation, date-format validation, partial-index migration; client bucketing pinned against a fixed local date (late-evening timezone edge, month boundaries) and dashboard panel grouping/degradation
 - **Auth & isolation tests**: scrypt hash format + verification, cookie flags (`HttpOnly`, `SameSite=Lax`, `Secure` on HTTPS), duplicate email `409`, uniform `401` (unknown email vs wrong password), token-hash-at-rest, expiry + opportunistic sweep, credential rate budget, session replay after logout; two-user isolation at HTTP/service/SQL levels — list/get/patch/delete/events/search/analytics never cross the boundary, foreign ids answer `404` not `403`, demo reset touches only the demo account
 - **Operations tests**: rate-limit matrix (budget, window reset, per-IP buckets behind a trusted proxy, spoofed-header resistance, 429-before-parse); readiness draining/unavailable; Prometheus cardinality guarantees (route patterns, no ids, single unmatched series); OpenAPI drift (router walk + live-response key comparison); backup script subprocess tests (WAL snapshot consistency, live-write point-in-time cut, overwrite refusal, integrity verification)
-- **E2E tests** (Playwright, separate CI job): twelve golden paths against the production build served by Express — auth flows (anonymous → sign-in screen, demo entry, register → private board → reload persistence, sign-out/sign-in round-trip, two-account isolation, inline wrong-password error) plus tracker paths (create → drawer move → search → dashboard, edit persistence, server-side validation round-trip, delete + reset dialogs, and the follow-up lifecycle (schedule → badge → dashboard panel → rejection clears it)
+- **E2E tests** (Playwright, separate CI job): sixteen golden paths against the production build served by Express — auth flows (anonymous → sign-in screen, demo entry, register → private board → reload persistence, sign-out/sign-in round-trip, two-account isolation, inline wrong-password error) plus tracker paths (create → drawer move → search → dashboard, edit persistence, server-side validation round-trip, delete + reset dialogs, the follow-up lifecycle (schedule → badge → dashboard panel → rejection clears it), archive → restore, CSV export → fresh-account import, theme persistence across reload, and markdown rendering in the drawer
 - CI runs audit → lint → typecheck → tests → build on every push and PR, on **both** Node 22.13.0 (the declared floor) and the latest 22.x, plus the E2E job
 
 ## Project structure
@@ -217,6 +223,7 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 - **Production operations** ([ADR-0007](docs/adr/0007-production-operations.md)) — rate limiting, Prometheus metrics, readiness/drain, generated OpenAPI 3.1 with drift tests, verified `VACUUM INTO` backups, CI-only Playwright E2E; zero new runtime dependencies.
 - **Authentication & multi-user** ([ADR-0008](docs/adr/0008-authentication-and-multi-user.md)) — server-side sessions (only SHA-256 of the cookie token is stored), scrypt password hashing with timing-equalized logins, ownership bound at the HTTP boundary via a scoped service facade, `404`-not-`403` cross-user semantics, a shared resettable demo account, and a separate credential rate budget.
 - **Follow-up reminders** ([ADR-0009](docs/adr/0009-follow-up-reminders.md)) — one date per application with a partial index, client-side timezone-aware bucketing, system `reminder` events, and auto-clear on rejection.
+- **CSV, archive, themes, markdown** ([ADR-0010](docs/adr/0010-csv-archive-theme-markdown.md)) — RFC 4180 export/import with formula-injection escaping and atomic validation, idempotent soft-archive with history, CSS-variable theming, and a safe-by-construction markdown subset — all with zero new dependencies.
 - **`node:sqlite` over an ORM** — the domain is small; plain SQL with a repository layer keeps the data flow explicit and the dependency tree tiny.
 - **Native HTML5 drag-and-drop** — no dnd library needed for a single-board use case; the drawer's status select covers touch devices and keyboard users.
 - **Hand-built SVG charts** — three focused visualizations don't justify a 300 KB charting dependency.
@@ -227,7 +234,7 @@ Full rationale lives in [`docs/adr/`](docs/adr/); the short version:
 ## Roadmap
 
 - [x] Authentication & multi-user support
-- [ ] CSV import/export
+- [x] CSV import/export
 - [x] Interview reminders (follow-up dates with overdue/today/upcoming buckets)
 - [x] Playwright end-to-end tests (CI job against the production build)
 

@@ -25,7 +25,9 @@ function median(values: number[]): number | null {
 /** All aggregates are ownership-scoped: one user's dashboard never sees another's rows. */
 export function buildOverview(db: DatabaseSync, userId: string): AnalyticsOverview {
   const statusRows = db
-    .prepare('SELECT status, COUNT(*) AS count FROM applications WHERE user_id = ? GROUP BY status')
+    .prepare(
+      'SELECT status, COUNT(*) AS count FROM applications WHERE user_id = ? AND archived_at IS NULL GROUP BY status',
+    )
     .all(userId) as unknown as { status: Status; count: number }[];
   const statusMap = new Map(statusRows.map((r) => [r.status, r.count]));
   const byStatus = STATUSES.map((status) => ({ status, count: statusMap.get(status) ?? 0 }));
@@ -42,7 +44,7 @@ export function buildOverview(db: DatabaseSync, userId: string): AnalyticsOvervi
     .prepare(
       `SELECT source, COUNT(*) AS count,
               SUM(CASE WHEN status = 'offer' THEN 1 ELSE 0 END) AS offers
-       FROM applications WHERE user_id = ? GROUP BY source`,
+       FROM applications WHERE user_id = ? AND archived_at IS NULL GROUP BY source`,
     )
     .all(userId) as unknown as { source: Source; count: number; offers: number }[];
   const sourceMap = new Map(sourceRows.map((r) => [r.source, r]));
@@ -53,7 +55,7 @@ export function buildOverview(db: DatabaseSync, userId: string): AnalyticsOvervi
   const salaryRows = db
     .prepare(
       `SELECT salary_min, salary_max FROM applications
-       WHERE user_id = ? AND (salary_min IS NOT NULL OR salary_max IS NOT NULL)`,
+       WHERE user_id = ? AND archived_at IS NULL AND (salary_min IS NOT NULL OR salary_max IS NOT NULL)`,
     )
     .all(userId) as unknown as { salary_min: number | null; salary_max: number | null }[];
   const midpoints = salaryRows.map((r) =>
@@ -78,7 +80,9 @@ export function buildOverview(db: DatabaseSync, userId: string): AnalyticsOvervi
     weeks.push({ week: iso, label, applied: 0 });
   }
   const appliedRows = db
-    .prepare(`SELECT applied_at FROM applications WHERE user_id = ? AND applied_at IS NOT NULL`)
+    .prepare(
+      `SELECT applied_at FROM applications WHERE user_id = ? AND archived_at IS NULL AND applied_at IS NOT NULL`,
+    )
     .all(userId) as unknown as { applied_at: string }[];
   const weekIndex = new Map(weeks.map((w, i) => [w.week, i]));
   for (const row of appliedRows) {
@@ -91,7 +95,7 @@ export function buildOverview(db: DatabaseSync, userId: string): AnalyticsOvervi
     .prepare(
       `SELECT e.id, e.application_id, e.type, e.message, e.created_at, a.company, a.position
        FROM events e JOIN applications a ON a.id = e.application_id
-       WHERE a.user_id = ?
+       WHERE a.user_id = ? AND a.archived_at IS NULL
        ORDER BY e.created_at DESC LIMIT 12`,
     )
     .all(userId)

@@ -38,6 +38,7 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     notes: null,
     appliedAt: null,
     followUpAt: null,
+    archivedAt: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     version: 1,
@@ -186,5 +187,20 @@ describe('useApplications: overlapping optimistic moves', () => {
     await act(async () => result.current.moveApp('a1', 'applied'));
     expect(updateMock).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('useApplications: archive view', () => {
+  afterEach(cleanup);
+
+  it('passes archived=true to the API and refetches on switch', async () => {
+    listMock.mockResolvedValue([makeApp()]);
+    const { rerender } = renderHook(
+      ({ archived }: { archived: boolean }) => useApplications({ notify: vi.fn(), archived }),
+      { initialProps: { archived: false } },
+    );
+    await waitFor(() => expect(listMock).toHaveBeenCalledWith({ archived: false }));
+    rerender({ archived: true });
+    await waitFor(() => expect(listMock).toHaveBeenCalledWith({ archived: true }));
   });
 });

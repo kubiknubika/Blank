@@ -94,9 +94,24 @@ export const createEventSchema = z.object({
 export const listApplicationsQuerySchema = z.object({
   status: z.enum(STATUSES).optional(),
   q: z.string().trim().max(200).optional(),
+  // 'true' = only archived rows; omitted/'false' = the active board.
+  archived: z.enum(['true', 'false']).default('false'),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
+
+/**
+ * CSV import travels as JSON ({ csv: "..." }) — the file is read in the
+ * browser and posted like any other mutation, so the JSON-only CSRF
+ * defense applies unchanged. 256 KiB ≈ the express.json body cap.
+ */
+export const importCsvSchema = z.object({
+  csv: z
+    .string()
+    .min(1, 'CSV content is required')
+    .max(256 * 1024),
+});
+export type ImportCsvInput = z.infer<typeof importCsvSchema>;
 
 // --- auth -----------------------------------------------------------------
 

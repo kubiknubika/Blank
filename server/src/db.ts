@@ -102,6 +102,17 @@ const MIGRATIONS: { id: number; name: string; up: string }[] = [
         WHERE follow_up_at IS NOT NULL;
     `,
   },
+  {
+    id: 6,
+    name: 'applications-archive',
+    // Soft archive: rows leave the active board and analytics but keep
+    // their history. NULL = active; the timestamp records WHEN.
+    up: `
+      ALTER TABLE applications ADD COLUMN archived_at TEXT;
+      CREATE INDEX idx_applications_archived
+        ON applications(user_id, archived_at);
+    `,
+  },
 ];
 
 export interface DbOptions {

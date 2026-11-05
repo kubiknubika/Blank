@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   createApplicationSchema,
   createEventSchema,
+  importCsvSchema,
   listApplicationsQuerySchema,
   updateApplicationSchema,
 } from '@offerflow/shared/schemas';
@@ -31,7 +32,10 @@ export function createApiRouter(service: ApplicationService, db: DatabaseSync): 
   // Data routes require a session; ops/health above stays public, and
   // unknown paths still fall through to a plain 404 (not 401) so the
   // API's shape isn't gated on auth.
-  api.use(['/applications', '/analytics', '/demo', '/reminders'], requireUser);
+  api.use(
+    ['/applications', '/analytics', '/demo', '/reminders', '/export', '/import'],
+    requireUser,
+  );
   const scopeOf = (req: { user?: { id: string } }): UserScope => service.forUser(req.user!.id);
 
   api.get('/applications', (req, res) => {
@@ -72,8 +76,29 @@ export function createApiRouter(service: ApplicationService, db: DatabaseSync): 
     res.status(201).json(scopeOf(req).addEvent(req.params.id, input));
   });
 
+  api.post('/applications/:id/archive', (req, res) => {
+    res.json(scopeOf(req).archive(req.params.id));
+  });
+
+  api.post('/applications/:id/restore', (req, res) => {
+    res.json(scopeOf(req).restore(req.params.id));
+  });
+
   api.get('/analytics/overview', (req, res) => {
     res.json(buildOverview(db, req.user!.id));
+  });
+
+  api.get('/export/csv', (req, res) => {
+    const csv = scopeOf(req).exportCsv();
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="offerflow-${stamp}.csv"`);
+    res.send(csv);
+  });
+
+  api.post('/import/csv', (req, res) => {
+    const input = importCsvSchema.parse(req.body);
+    res.status(201).json(scopeOf(req).importCsv(input.csv));
   });
 
   api.get('/reminders', (req, res) => {
