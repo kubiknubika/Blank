@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { Request, Response } from 'express';
 import { makeTestApp } from './helpers.js';
+import { rateLimit, MAX_TRACKED_IPS } from '../src/http/rateLimit.js';
+import { RateLimitedError } from '../src/errors.js';
 
 /**
  * The mutation budget: a compromised script (or a buggy retry loop)
@@ -159,5 +162,44 @@ describe('rate limiting (per-IP)', () => {
       .set('X-Forwarded-For', '198.51.100.99')
       .send({ company: 'Acme', position: 'FE' });
     expect(res.status).toBe(429); // still the socket IP's bucket
+  });
+});
+
+describe('rate limiter memory is hard-bounded against fresh-IP sprays', () => {
+  // Drive the middleware directly with mock req/res: 10k+ HTTP round-trips
+  // would be slow, and the bucket map is what we are actually asserting on.
+  function hit(mw: ReturnType<typeof rateLimit>, ip: string): unknown {
+    let error: unknown = null;
+    const req = { ip, socket: { remoteAddress: ip } } as unknown as Request;
+    const res = { setHeader: () => {} } as unknown as Response;
+    mw(req, res, (err?: unknown) => {
+      error = err ?? null;
+    });
+    return error; // null = allowed, RateLimitedError = blocked
+  }
+
+  it('FIFO-evicts the oldest bucket once the cap is reached', () => {
+    const mw = rateLimit({ windowMs: 60_000, max: 1, now: () => 1_000_000 });
+    const ip = (i: number) => `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+    // Spray more distinct IPs than the cap, each within the same window.
+    // The expired-only sweep frees nothing here (every bucket is live), so
+    // without FIFO eviction the map would grow past MAX_TRACKED_IPS.
+    for (let i = 0; i < MAX_TRACKED_IPS + 50; i++) {
+      expect(hit(mw, ip(i)), `ip ${i} should be allowed on first hit`).toBeNull();
+    }
+    // The earliest IPs were evicted → a fresh budget → allowed again.
+    expect(hit(mw, ip(0))).toBeNull();
+    // A recent IP is still tracked and over its budget → blocked. This
+    // proves the map kept the newest MAX_TRACKED_IPS entries, not everything.
+    expect(hit(mw, ip(MAX_TRACKED_IPS + 49))).toBeInstanceOf(RateLimitedError);
+  });
+
+  it('an expired bucket is reset in place without growing the map', () => {
+    let clock = 1_000_000;
+    const mw = rateLimit({ windowMs: 60_000, max: 1, now: () => clock });
+    expect(hit(mw, '203.0.113.1')).toBeNull();
+    expect(hit(mw, '203.0.113.1')).toBeInstanceOf(RateLimitedError);
+    clock += 60_001; // window rolls over; same key resets, no new entry
+    expect(hit(mw, '203.0.113.1')).toBeNull();
   });
 });

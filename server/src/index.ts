@@ -55,6 +55,9 @@ function main(): void {
       dbPath: config.DB_PATH,
     });
   });
+  // Slowloris defense: drop clients that trickle headers or a body.
+  server.headersTimeout = config.HTTP_HEADERS_TIMEOUT_MS;
+  server.requestTimeout = config.HTTP_REQUEST_TIMEOUT_MS;
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
@@ -69,6 +72,9 @@ function main(): void {
     // Stop accepting connections, let in-flight requests finish, then close the DB.
     const timer = setTimeout(() => {
       logger.error('graceful shutdown timed out, forcing exit');
+      // Sever any still-open sockets so the process can actually exit
+      // instead of lingering on a slow/stuck client.
+      server.closeAllConnections();
       process.exit(1);
     }, config.SHUTDOWN_TIMEOUT_MS);
     timer.unref();
@@ -80,6 +86,11 @@ function main(): void {
       clearTimeout(timer);
       process.exit(err ? 1 : 0);
     });
+    // server.close() stops NEW connections but waits for idle keep-alive
+    // ones to drain on their own (up to keepAliveTimeout each). Drop the
+    // idle ones immediately so shutdown is fast; in-flight requests on
+    // active connections are still allowed to finish.
+    server.closeIdleConnections();
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));

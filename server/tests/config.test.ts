@@ -31,6 +31,22 @@ describe('loadConfig', () => {
     expect(config.DB_BUSY_TIMEOUT_MS).toBe(5000);
     expect(config.TRUSTED_ORIGINS).toEqual([]);
     expect(config.TRUSTED_HOSTS).toEqual([]);
+    expect(config.READ_RATE_LIMIT_MAX).toBe(600);
+    expect(config.HTTP_HEADERS_TIMEOUT_MS).toBe(10_000);
+    expect(config.HTTP_REQUEST_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it('rejects a headers timeout that is not below the request timeout', () => {
+    expect(() =>
+      loadConfig({ HTTP_HEADERS_TIMEOUT_MS: '30000', HTTP_REQUEST_TIMEOUT_MS: '30000' }),
+    ).toThrow(/Invalid environment/);
+    expect(() =>
+      loadConfig({ HTTP_HEADERS_TIMEOUT_MS: '40000', HTTP_REQUEST_TIMEOUT_MS: '30000' }),
+    ).toThrow(/Invalid environment/);
+    // A valid tighter pair parses.
+    const ok = loadConfig({ HTTP_HEADERS_TIMEOUT_MS: '5000', HTTP_REQUEST_TIMEOUT_MS: '15000' });
+    expect(ok.HTTP_HEADERS_TIMEOUT_MS).toBe(5000);
+    expect(ok.HTTP_REQUEST_TIMEOUT_MS).toBe(15000);
   });
 
   it('parses comma-separated origin/host allowlists', () => {
