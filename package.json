@@ -17,6 +17,7 @@
     "build": "npm run build -w shared && npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
     "backup": "node server/scripts/backup.mjs",
+    "restore": "node server/scripts/restore.mjs",
     "test": "npm run build -w shared && npm run test -w server && npm run test -w client",
     "test:e2e": "playwright test",
     "bench": "node scripts/benchmark.mjs",
